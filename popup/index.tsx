@@ -1,10 +1,10 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Header } from '~/components/popup/Header';
 import { MediaCard } from '~/components/popup/MediaCard';
 import { Toast, type ToastMessage } from '~/components/ui/Toast';
 import { ShieldCheck, Film, RefreshCw, Search } from 'lucide-react';
 import { LinkVerifierService } from '~/services/link-verifier';
-import type { MediaMetadata } from '~/types/media';
+import type { MediaMetadata, StreamDownloadProgress } from '~/types/media';
 import type { SecurityStatus } from '~/types/security';
 import type { ExtensionMessage } from '~/types/messages';
 import '~/style.css';
@@ -18,6 +18,7 @@ export default function PopupIndex() {
   const [isEnabled, setIsEnabled] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [toast, setToast] = useState<ToastMessage | null>(null);
+  const [downloadProgressMap, setDownloadProgressMap] = useState<Record<string, StreamDownloadProgress>>({});
 
   useEffect(() => {
     const initPopup = async () => {
@@ -42,6 +43,7 @@ export default function PopupIndex() {
         chrome.runtime.sendMessage(
           { type: 'GET_TAB_MEDIA_REQUEST', payload: { tabId: tab?.id } },
           (response) => {
+            if (chrome.runtime.lastError) return;
             if (response?.mediaList) {
               setMediaList(response.mediaList);
             }
@@ -54,6 +56,7 @@ export default function PopupIndex() {
           chrome.runtime.sendMessage(
             { type: 'GET_ADS_BLOCKED_COUNT', payload: { tabId: tab.id } },
             (response) => {
+              if (chrome.runtime.lastError) return;
               if (response?.count !== undefined) {
                 setBlockedAdsCount(response.count);
               }
@@ -66,6 +69,22 @@ export default function PopupIndex() {
     };
 
     initPopup();
+
+    const progressListener = (message: ExtensionMessage) => {
+      if (message.type === 'DOWNLOAD_PROGRESS_UPDATE') {
+        const progress = message.payload;
+        setDownloadProgressMap((prev) => ({
+          ...prev,
+          [progress.mediaId]: progress
+        }));
+      }
+    };
+
+    chrome.runtime.onMessage.addListener(progressListener);
+
+    return () => {
+      chrome.runtime.onMessage.removeListener(progressListener);
+    };
   }, []);
 
   const handleToggleProtection = async () => {
@@ -99,13 +118,22 @@ export default function PopupIndex() {
           type: 'TRIGGER_CLEAN_PLAYER',
           payload: media
         };
-        chrome.tabs.sendMessage(tab.id, msg);
+        chrome.tabs.sendMessage(tab.id, msg).catch(() => {});
         window.close();
       }
     });
   };
 
   const handleDownload = (media: MediaMetadata) => {
+    const EXT_MAP: Record<string, string> = {
+      MP4: 'mp4',
+      WEBM: 'webm',
+      HLS: 'mp4',
+      DASH: 'mp4',
+      AUDIO: 'mp3'
+    };
+    const ext = EXT_MAP[media.formatCategory] || 'mp4';
+
     setToast({
       id: Date.now().toString(),
       type: 'info',
@@ -118,7 +146,7 @@ export default function PopupIndex() {
       payload: {
         mediaId: media.id,
         sourceUrl: media.sourceUrl,
-        filename: `${media.pageTitle || 'video'}.${media.formatCategory.toLowerCase()}`,
+        filename: `${media.pageTitle || 'video'}.${ext}`,
         formatCategory: media.formatCategory
       }
     };
@@ -187,6 +215,7 @@ export default function PopupIndex() {
               <MediaCard
                 key={media.id}
                 media={media}
+                downloadProgress={downloadProgressMap[media.sourceUrl] || downloadProgressMap[media.id]}
                 onPlayClean={handlePlayClean}
                 onDownload={handleDownload}
               />

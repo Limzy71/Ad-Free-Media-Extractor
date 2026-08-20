@@ -1,4 +1,4 @@
-﻿import cssText from 'data-text:~style.css';
+import cssText from 'data-text:~style.css';
 import type { PlasmoCSConfig, PlasmoGetStyle } from 'plasmo';
 import React, { useState, useEffect } from 'react';
 import { Play, Download, X, Layers, ChevronUp, ChevronDown, ShieldCheck } from 'lucide-react';
@@ -56,6 +56,41 @@ export default function ContentOverlay() {
         });
       } else if (message.type === 'TRIGGER_CLEAN_PLAYER') {
         setActivePlayMedia(message.payload);
+      } else if (message.type === 'DOWNLOAD_PROGRESS_UPDATE') {
+        const progress = message.payload;
+        if (progress.status === 'DOWNLOADING_SEGMENTS') {
+          setToast({
+            id: 'hls-progress',
+            type: 'info',
+            title: `Mengunduh Segmen HLS (${progress.percentage}%)`,
+            message: `Telah mengunduh ${progress.downloadedSegments} dari ${progress.totalSegments} segmen (${(progress.downloadedBytes / (1024 * 1024)).toFixed(1)} MB)...`,
+            durationMs: 2500
+          });
+        } else if (progress.status === 'TRANSMUXING') {
+          setToast({
+            id: 'hls-progress',
+            type: 'info',
+            title: 'Menggabungkan Berkas (Transmuxing)',
+            message: 'Sedang mengonversi segmen TS menjadi berkas MP4 utuh...',
+            durationMs: 3000
+          });
+        } else if (progress.status === 'COMPLETED') {
+          setToast({
+            id: 'hls-progress',
+            type: 'success',
+            title: 'Unduhan Berhasil!',
+            message: 'Berkas video MP4 telah selesai digabungkan dan disimpan ke folder Downloads.',
+            durationMs: 4500
+          });
+        } else if (progress.status === 'FAILED') {
+          setToast({
+            id: 'hls-progress',
+            type: 'error',
+            title: 'Unduhan Gagal',
+            message: progress.errorMessage || 'Terjadi kesalahan saat mengunduh stream HLS.',
+            durationMs: 5000
+          });
+        }
       }
     };
 
@@ -68,6 +103,15 @@ export default function ContentOverlay() {
   }, []);
 
   const handleDownload = (media: MediaMetadata) => {
+    const EXT_MAP: Record<string, string> = {
+      MP4: 'mp4',
+      WEBM: 'webm',
+      HLS: 'mp4',
+      DASH: 'mp4',
+      AUDIO: 'mp3'
+    };
+    const ext = EXT_MAP[media.formatCategory] || 'mp4';
+
     setToast({
       id: Date.now().toString(),
       type: 'info',
@@ -80,7 +124,7 @@ export default function ContentOverlay() {
       payload: {
         mediaId: media.id,
         sourceUrl: media.sourceUrl,
-        filename: `${media.pageTitle || 'video'}.${media.formatCategory.toLowerCase()}`,
+        filename: `${media.pageTitle || 'video'}.${ext}`,
         formatCategory: media.formatCategory
       }
     };
