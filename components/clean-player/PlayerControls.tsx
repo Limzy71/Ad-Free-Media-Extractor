@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React, { useState } from 'react';
 import {
   Play,
   Pause,
@@ -8,23 +8,29 @@ import {
   Minimize,
   Download,
   RotateCcw,
-  RotateCw
+  RotateCw,
+  PictureInPicture2
 } from 'lucide-react';
 
 interface PlayerControlsProps {
   isPlaying: boolean;
   isMuted: boolean;
   isFullscreen: boolean;
+  isPipAvailable: boolean;
   currentTime: number;
   duration: number;
   volume: number;
   playbackRate: number;
+  levels?: { height: number; bitrate: number }[];
+  currentLevel?: number;
   onTogglePlay: () => void;
   onToggleMute: () => void;
   onToggleFullscreen: () => void;
+  onTogglePip: () => void;
   onSeek: (time: number) => void;
   onVolumeChange: (vol: number) => void;
   onPlaybackRateChange: (rate: number) => void;
+  onLevelChange?: (levelIndex: number) => void;
   onDownload: () => void;
 }
 
@@ -32,20 +38,28 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
   isPlaying,
   isMuted,
   isFullscreen,
+  isPipAvailable,
   currentTime,
   duration,
   volume,
   playbackRate,
+  levels,
+  currentLevel = -1,
   onTogglePlay,
   onToggleMute,
   onToggleFullscreen,
+  onTogglePip,
   onSeek,
   onVolumeChange,
   onPlaybackRateChange,
+  onLevelChange,
   onDownload
 }) => {
+  const [hoverTime, setHoverTime] = useState<number | null>(null);
+  const [hoverX, setHoverX] = useState<number>(0);
+
   const formatTime = (seconds: number): string => {
-    if (isNaN(seconds)) return '0:00';
+    if (isNaN(seconds) || seconds < 0) return '0:00';
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
@@ -53,10 +67,31 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
 
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
 
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    setHoverTime(pos * duration);
+    setHoverX(e.clientX - rect.left);
+  };
+
   return (
-    <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent p-4 flex flex-col gap-2.5 select-none transition-opacity duration-200">
-      {/* Timeline Progress Bar */}
-      <div className="relative w-full h-1.5 hover:h-2.5 bg-white/20 rounded-full cursor-pointer transition-all group">
+    <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/75 to-transparent p-4 flex flex-col gap-2.5 select-none transition-opacity duration-200 z-30">
+      {/* Timeline Progress Bar with Hover Preview Tooltip */}
+      <div
+        className="relative w-full h-1.5 hover:h-2.5 bg-white/20 rounded-full cursor-pointer transition-all group"
+        onMouseMove={handleMouseMove}
+        onMouseLeave={() => setHoverTime(null)}
+      >
+        {/* Tooltip Preview */}
+        {hoverTime !== null && (
+          <div
+            className="absolute -top-7 px-1.5 py-0.5 bg-zinc-900 text-white text-[10px] font-mono rounded shadow border border-white/10 -translate-x-1/2 pointer-events-none"
+            style={{ left: `${hoverX}px` }}
+          >
+            {formatTime(hoverTime)}
+          </div>
+        )}
+
         <input
           type="range"
           min={0}
@@ -69,13 +104,13 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
           className="h-full bg-blue-500 rounded-full relative transition-all"
           style={{ width: `${progressPercent}%` }}
         >
-          <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow scale-0 group-hover:scale-100 transition-transform" />
+          <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3.5 h-3.5 bg-white rounded-full shadow-lg scale-0 group-hover:scale-100 transition-transform" />
         </div>
       </div>
 
       {/* Control Buttons Row */}
       <div className="flex items-center justify-between text-white text-xs font-medium">
-        {/* Left: Play/Pause, Seek Buttons, Time Counter */}
+        {/* Left: Play/Pause, Seek Buttons, Volume, Time Counter */}
         <div className="flex items-center gap-3">
           <button
             onClick={onTogglePlay}
@@ -129,18 +164,36 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
             />
           </div>
 
-          <span className="text-[11px] text-zinc-300 font-mono">
+          <span className="text-[11px] text-zinc-300 font-mono tracking-tight">
             {formatTime(currentTime)} / {formatTime(duration)}
           </span>
         </div>
 
-        {/* Right: Speed Picker, Download, Fullscreen */}
+        {/* Right: Quality Picker, Speed, PiP, Download, Fullscreen */}
         <div className="flex items-center gap-2">
+          {/* HLS Quality Selector (if available) */}
+          {levels && levels.length > 0 && onLevelChange && (
+            <select
+              value={currentLevel}
+              onChange={(e) => onLevelChange(parseInt(e.target.value, 10))}
+              className="bg-black/50 border border-white/20 rounded-md px-1.5 py-0.5 text-[11px] text-white hover:bg-black/70 cursor-pointer focus:outline-none"
+              title="Pilih Resolusi Video"
+            >
+              <option value="-1">Otomatis</option>
+              {levels.map((lvl, idx) => (
+                <option key={idx} value={idx}>
+                  {lvl.height}p
+                </option>
+              ))}
+            </select>
+          )}
+
           {/* Speed Selector */}
           <select
             value={playbackRate}
             onChange={(e) => onPlaybackRateChange(parseFloat(e.target.value))}
-            className="bg-black/40 border border-white/20 rounded-md px-1.5 py-0.5 text-[11px] text-white hover:bg-black/60 cursor-pointer focus:outline-none"
+            className="bg-black/50 border border-white/20 rounded-md px-1.5 py-0.5 text-[11px] text-white hover:bg-black/70 cursor-pointer focus:outline-none"
+            title="Kecepatan Pemutaran"
           >
             <option value="0.5">0.5x</option>
             <option value="1">1.0x</option>
@@ -149,6 +202,18 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
             <option value="2">2.0x</option>
           </select>
 
+          {/* Picture in Picture */}
+          {isPipAvailable && (
+            <button
+              onClick={onTogglePip}
+              className="p-1.5 hover:bg-white/20 rounded-lg transition-colors text-zinc-300 hover:text-white hidden sm:block"
+              title="Picture-in-Picture (P)"
+            >
+              <PictureInPicture2 className="w-4 h-4" />
+            </button>
+          )}
+
+          {/* Download Button */}
           <button
             onClick={onDownload}
             className="p-1.5 hover:bg-white/20 rounded-lg transition-colors text-blue-400 hover:text-blue-300"
@@ -157,6 +222,7 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
             <Download className="w-4 h-4" />
           </button>
 
+          {/* Fullscreen Button */}
           <button
             onClick={onToggleFullscreen}
             className="p-1.5 hover:bg-white/20 rounded-lg transition-colors"

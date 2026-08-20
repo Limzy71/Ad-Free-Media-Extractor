@@ -21,7 +21,7 @@ Sebelum memulai atau saat mengerjakan setiap tahapan, selalu rujuk dokumen spesi
 | :--- | :--- | :---: | :--- |
 | **Fase 1** | Inisialisasi Plasmo, TypeScript & Tailwind CSS v4 | `[x] Selesai` | Struktur proyek ekstensi siap build & style terisolasi |
 | **Fase 2** | Background Service Worker & Media Sniffer | `[x] Selesai` | Penangkapan URL video MP4, WebM, M3U8 dari network |
-| **Fase 3** | Injected UI (Shadow DOM) & Clean Player Modal | `[ ] Belum Mulai` | Floating action badge & pemutar HTML5 + `hls.js` |
+| **Fase 3** | Injected UI (Shadow DOM) & Clean Player Modal | `[x] Selesai` | Floating action badge & pemutar HTML5 + `hls.js` |
 | **Fase 4** | Popup Extension Panel & Multi-Media Cards | `[ ] Belum Mulai` | Panel popup interaktif dengan Dark Mode & daftar video |
 | **Fase 5** | Smart Link Verifier & Red Warning Page | `[ ] Belum Mulai` | Pencegatan URL phishing/judi & halaman `warning.html` |
 | **Fase 6** | Universal Ad-Blocker Core (DNR & DOM Cleaner) | `[ ] Belum Mulai` | Pemblokiran iklan banner, pop-under, & overlay anti-klik |
@@ -54,11 +54,11 @@ Sebelum memulai atau saat mengerjakan setiap tahapan, selalu rujuk dokumen spesi
 
 ### ðŸŽ¬ **Fase 3: Injected UI (Shadow DOM) & Clean Player Modal**
 *   [ ] Buat Content Script UI (`content/index.tsx`) dengan Plasmo Shadow DOM root.
-*   [ ] Implementasikan **Floating Action Badge** di sudut kanan bawah dengan efek transisi hover sesuai [DESIGN.md](file:///D:/Download%20video/DESIGN.md).
-*   [ ] Buat komponen **Clean Player Modal** berbasis HTML5 murni yang terintegrasi dengan pustaka `hls.js` untuk memutar stream `.m3u8`.
-*   [ ] Tambahkan custom floating control bar (Play/Pause, Seekbar, Volume, Fullscreen).
-*   [ ] Implementasikan seluruh pintasan keyboard (*Hotkeys*: `Space`, `Esc`, `F`, `M`, `â†`/`â†’`, `â†‘`/`â†“`).
-*   [ ] Buat komponen **Toast Notification** melayang untuk umpan balik instan ke pengguna.
+*   [x] Implementasikan **Floating Action Badge** di sudut kanan bawah dengan efek transisi hover sesuai [DESIGN.md](file:///D:/Download%20video/DESIGN.md).
+*   [x] Buat komponen **Clean Player Modal** berbasis HTML5 murni yang terintegrasi dengan pustaka `hls.js` untuk memutar stream `.m3u8`.
+*   [x] Tambahkan custom floating control bar (Play/Pause, Seekbar, Volume, Fullscreen).
+*   [x] Implementasikan seluruh pintasan keyboard (*Hotkeys*: `Space`, `Esc`, `F`, `M`, `â†`/`â†’`, `â†‘`/`â†“`).
+*   [x] Buat komponen **Toast Notification** melayang untuk umpan balik instan ke pengguna.
 *   *Kriteria Selesai:* Mengklik floating badge membuka modal player bersih yang memutar video tanpa iklan atau pop-up situs host.
 
 ---
