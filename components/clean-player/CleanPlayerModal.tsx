@@ -1,4 +1,4 @@
-﻿import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import Hls from 'hls.js';
 import { X, Film, AlertTriangle, RefreshCw } from 'lucide-react';
 import { PlayerControls } from './PlayerControls';
@@ -56,7 +56,11 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
       if (Hls.isSupported()) {
         const hlsInstance = new Hls({
           enableWorker: true,
-          lowLatencyMode: true
+          lowLatencyMode: false,
+          // Selalu mulai dari level tertinggi yang tersedia, bukan adaptif
+          startLevel: -1,
+          abrEwmaDefaultEstimate: 10_000_000, // Asumsikan bandwidth 10 Mbps untuk pemilihan awal
+          capLevelToPlayerSize: false
         });
         hlsRef.current = hlsInstance;
 
@@ -70,6 +74,9 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
               bitrate: lvl.bitrate
             }));
             setHlsLevels(mappedLevels);
+            // Paksa resolusi tertinggi sejak awal (index terakhir = kualitas tertinggi di hls.js)
+            hlsInstance.currentLevel = data.levels.length - 1;
+            setCurrentHlsLevel(data.levels.length - 1);
           }
           video.play().catch(() => setIsPlaying(false));
         });
