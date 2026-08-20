@@ -57,9 +57,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
         const hlsInstance = new Hls({
           enableWorker: true,
           lowLatencyMode: false,
-          // Selalu mulai dari level tertinggi yang tersedia, bukan adaptif
-          startLevel: -1,
-          abrEwmaDefaultEstimate: 10_000_000, // Asumsikan bandwidth 10 Mbps untuk pemilihan awal
+          abrEwmaDefaultEstimate: 10_000_000,
           capLevelToPlayerSize: false
         });
         hlsRef.current = hlsInstance;
@@ -74,7 +72,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
               bitrate: lvl.bitrate
             }));
             setHlsLevels(mappedLevels);
-            // Paksa resolusi tertinggi sejak awal (index terakhir = kualitas tertinggi di hls.js)
+            // Force resolusi tertinggi (index terakhir)
             hlsInstance.currentLevel = data.levels.length - 1;
             setCurrentHlsLevel(data.levels.length - 1);
           }
