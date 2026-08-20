@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Header } from '~/components/popup/Header';
 import { MediaCard } from '~/components/popup/MediaCard';
 import { Toast, type ToastMessage } from '~/components/ui/Toast';
@@ -113,14 +113,13 @@ export default function PopupIndex() {
 
   const handlePlayClean = (media: MediaMetadata) => {
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-      if (tab?.id) {
-        const msg: ExtensionMessage = {
-          type: 'TRIGGER_CLEAN_PLAYER',
-          payload: media
-        };
-        chrome.tabs.sendMessage(tab.id, msg).catch(() => {});
-        window.close();
-      }
+      if (chrome.runtime.lastError || !tab?.id) return;
+      const msg: ExtensionMessage = {
+        type: 'TRIGGER_CLEAN_PLAYER',
+        payload: media
+      };
+      chrome.tabs.sendMessage(tab.id, msg).catch(() => {});
+      window.close();
     });
   };
 
@@ -151,7 +150,7 @@ export default function PopupIndex() {
       }
     };
 
-    chrome.runtime.sendMessage(msg);
+    chrome.runtime.sendMessage(msg).catch(() => {});
   };
 
   const filteredMedia = mediaList.filter((m) =>

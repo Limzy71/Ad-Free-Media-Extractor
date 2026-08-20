@@ -1,6 +1,6 @@
 import cssText from 'data-text:~style.css';
 import type { PlasmoCSConfig, PlasmoGetStyle } from 'plasmo';
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Play, Download, X, Layers, ChevronUp, ChevronDown, ShieldCheck } from 'lucide-react';
 import { CleanPlayerModal } from '~/components/clean-player/CleanPlayerModal';
 import { Toast, type ToastMessage } from '~/components/ui/Toast';
@@ -36,12 +36,11 @@ export default function ContentOverlay() {
       setBlockedAdsCount(count);
       // Laporkan jumlah iklan yang dibersihkan ke Background Service Worker
       chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-        if (tab?.id) {
-          chrome.runtime.sendMessage({
-            type: 'ADS_BLOCKED_COUNT_UPDATE',
-            payload: { tabId: tab.id, count }
-          });
-        }
+        if (chrome.runtime.lastError || !tab?.id) return;
+        chrome.runtime.sendMessage({
+          type: 'ADS_BLOCKED_COUNT_UPDATE',
+          payload: { tabId: tab.id, count }
+        }).catch(() => {});
       });
     });
 
@@ -129,7 +128,7 @@ export default function ContentOverlay() {
       }
     };
 
-    chrome.runtime.sendMessage(msg);
+    chrome.runtime.sendMessage(msg).catch(() => {});
   };
 
   const handleBadgeClick = () => {
