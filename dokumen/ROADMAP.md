@@ -22,9 +22,9 @@ Sebelum memulai atau saat mengerjakan setiap tahapan, selalu rujuk dokumen spesi
 | **Fase 1** | Inisialisasi Plasmo, TypeScript & Tailwind CSS v4 | `[x] Selesai` | Struktur proyek ekstensi siap build & style terisolasi |
 | **Fase 2** | Background Service Worker & Media Sniffer | `[x] Selesai` | Penangkapan URL video MP4, WebM, M3U8 dari network |
 | **Fase 3** | Injected UI (Shadow DOM) & Clean Player Modal | `[x] Selesai` | Floating action badge & pemutar HTML5 + `hls.js` |
-| **Fase 4** | Popup Extension Panel & Multi-Media Cards | `[ ] Belum Mulai` | Panel popup interaktif dengan Dark Mode & daftar video |
-| **Fase 5** | Smart Link Verifier & Red Warning Page | `[ ] Belum Mulai` | Pencegatan URL phishing/judi & halaman `warning.html` |
-| **Fase 6** | Universal Ad-Blocker Core (DNR & DOM Cleaner) | `[ ] Belum Mulai` | Pemblokiran iklan banner, pop-under, & overlay anti-klik |
+| **Fase 4** | Popup Extension Panel & Multi-Media Cards | `[x] Selesai` | Panel popup interaktif dengan Dark Mode & daftar video |
+| **Fase 5** | Smart Link Verifier & Red Warning Page | `[x] Selesai` | Pencegatan URL phishing/judi & halaman `warning.html` |
+| **Fase 6** | Universal Ad-Blocker Core (DNR & DOM Cleaner) | `[x] Selesai` | Pemblokiran iklan banner, pop-under, & overlay anti-klik |
 | **Fase 7** | Downloader Engine & HLS Segment Merger | `[ ] Belum Mulai` | Unduhan langsung MP4 & penggabungan segmen HLS `.ts` |
 | **Fase 8** | Backend Companion (Laravel 12 API) | `[ ] Belum Mulai` | Proxy CORS media & enkapsulasi API keamanan |
 | **Fase 9** | Pengujian Komprehensif & Build Rilis | `[ ] Belum Mulai` | Paket ekstensi teruji bebas bug untuk distribusi |
@@ -64,27 +64,27 @@ Sebelum memulai atau saat mengerjakan setiap tahapan, selalu rujuk dokumen spesi
 ---
 
 ### ðŸ“± **Fase 4: Popup Extension Panel & Multi-Media Cards**
-*   [ ] Buat antarmuka `popup/index.tsx` berukuran `360px x 480px` dengan dukungan **Native Dark Mode**.
-*   [ ] Bangun komponen **Header Status**: Perisai keamanan domain aktif & toggle proteksi per-situs (*whitelist*).
-*   [ ] Bangun komponen **Media Item Card List**: Menampilkan thumbnail, badge resolusi, format (`MP4`/`HLS`), dan tombol aksi cepat (*"Nonton Bersih"* & *"Unduh"*).
-*   [ ] Bangun komponen **Empty State**: Ilustrasi ramah saat tab tidak memuat video.
+*   [x] Buat antarmuka `popup/index.tsx` berukuran `360px x 480px` dengan dukungan **Native Dark Mode**.
+*   [x] Bangun komponen **Header Status**: Perisai keamanan domain aktif & toggle proteksi per-situs (*whitelist*).
+*   [x] Bangun komponen **Media Item Card List**: Menampilkan thumbnail, badge resolusi, format (`MP4`/`HLS`), dan tombol aksi cepat (*"Nonton Bersih"* & *"Unduh"*).
+*   [x] Bangun komponen **Empty State**: Ilustrasi ramah saat tab tidak memuat video.
 *   *Kriteria Selesai:* Mengklik ikon ekstensi di toolbar menampilkan popup yang sinkron dengan daftar video di tab aktif.
 
 ---
 
 ### ðŸ›¡ï¸ **Fase 5: Smart Link Verifier & Red Warning Page**
-*   [ ] Buat modul pencegat URL pada event `chrome.webNavigation.onBeforeNavigate`.
-*   [ ] Implementasikan *Local Fast-Cache* (IndexedDB / Chrome Storage) untuk menyimpan domain aman/berbahaya.
-*   [ ] Buat halaman peringatan internal `warning.html` dengan latar merah gelap, informasi ancaman, dan tombol kembali ke halaman aman.
-*   [ ] Tambahkan opsi bypass berisiko (*Proceed anyway*) jika pengguna memaksa membuka link.
+*   [x] Buat modul pencegat URL pada event `chrome.webNavigation.onBeforeNavigate`.
+*   [x] Implementasikan *Local Fast-Cache* (IndexedDB / Chrome Storage) untuk menyimpan domain aman/berbahaya.
+*   [x] Buat halaman peringatan internal `tabs/warning.tsx` dengan latar merah gelap, informasi ancaman, dan tombol kembali ke halaman aman.
+*   [x] Tambahkan opsi bypass berisiko (*Proceed anyway*) jika pengguna memaksa membuka link.
 *   *Kriteria Selesai:* Membuka tautan uji coba situs judi/malware langsung dialihkan ke halaman `warning.html` sebelum situs termuat.
 
 ---
 
 ### ðŸ§¹ **Fase 6: Universal Ad-Blocker Core (DNR & DOM Cleaner)**
-*   [ ] Susun rulesets statis `chrome.declarativeNetRequest` berbasis EasyList untuk memblokir tracker dan banner iklan pihak ketiga.
-*   [ ] Buat skrip pembersih DOM di Content Script untuk proaktif mendeteksi dan menghapus layer transparan anti-klik (*clickjacking invisible overlays*).
-*   [ ] Sediakan penghitung (*counter*) jumlah iklan/tracker yang berhasil dibersihkan pada Popup Panel.
+*   [x] Susun dynamic rulesets `chrome.declarativeNetRequest` berbasis EasyList untuk memblokir tracker dan banner iklan pihak ketiga.
+*   [x] Buat skrip pembersih DOM di Content Script untuk proaktif mendeteksi dan menghapus layer transparan anti-klik (*clickjacking invisible overlays*).
+*   [x] Sediakan penghitung (*counter*) jumlah iklan/tracker yang berhasil dibersihkan pada Popup Panel.
 *   *Kriteria Selesai:* Menjelajah situs streaming video uji coba bebas dari pop-under atau tab baru yang terbuka sendiri saat area video diklik.
 
 ---

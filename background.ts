@@ -1,11 +1,23 @@
 ﻿import { MediaSnifferService } from '~/services/media-sniffer';
 import { LinkVerifierService } from '~/services/link-verifier';
 import { DownloaderService } from '~/services/hls-downloader';
+import { AdBlockerService } from '~/services/ad-blocker';
 import type { MediaMetadata } from '~/types/media';
 import type { ExtensionMessage } from '~/types/messages';
 
 // Penyimpanan media aktif di memori per tabId
 const tabMediaMap = new Map<number, MediaMetadata[]>();
+
+/**
+ * 0. Inisialisasi Aturan Pemblokir Iklan Dinamis (DNR Rulesets)
+ */
+chrome.runtime.onInstalled.addListener(() => {
+  AdBlockerService.setupDynamicAdBlockRules();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  AdBlockerService.setupDynamicAdBlockRules();
+});
 
 /**
  * Mengupdate indikator badge pada ikon ekstensi di toolbar browser
@@ -26,7 +38,6 @@ function updateExtensionBadge(tabId: number, count: number): void {
  */
 chrome.webRequest.onHeadersReceived.addListener(
   (details) => {
-    // Abaikan jika bukan di tab normal atau request internal ekstensi
     if (details.tabId < 0) return;
 
     const contentTypeHeader = details.responseHeaders?.find(
@@ -45,7 +56,6 @@ chrome.webRequest.onHeadersReceived.addListener(
       chrome.tabs.get(details.tabId, (tab) => {
         if (chrome.runtime.lastError || !tab) return;
 
-        // Abaikan URL internal peramban & ekstensi
         if (
           !tab.url ||
           tab.url.startsWith('chrome://') ||
@@ -71,10 +81,8 @@ chrome.webRequest.onHeadersReceived.addListener(
           currentList.push(mediaItem);
           tabMediaMap.set(details.tabId, currentList);
 
-          // Update badge counter di toolbar
           updateExtensionBadge(details.tabId, currentList.length);
 
-          // Kirim pesan ke Content Script tab tersebut
           const msg: ExtensionMessage = {
             type: 'MEDIA_DETECTED',
             payload: mediaItem
@@ -108,7 +116,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
  * 3. Smart Link Verifier: Memeriksa navigasi ke situs berbahaya/judi
  */
 chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
-  // Hanya tangani frame utama (main frame) dan URL publik (http/https)
   if (details.frameId !== 0 || !details.url || !details.url.startsWith('http')) return;
 
   const result = await LinkVerifierService.verifyUrl(details.url);

@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { Header } from '~/components/popup/Header';
 import { MediaCard } from '~/components/popup/MediaCard';
 import { Toast, type ToastMessage } from '~/components/ui/Toast';
-import { ShieldCheck, Film, RefreshCw, ExternalLink } from 'lucide-react';
+import { ShieldCheck, Film, RefreshCw, Search } from 'lucide-react';
+import { LinkVerifierService } from '~/services/link-verifier';
 import type { MediaMetadata } from '~/types/media';
 import type { SecurityStatus } from '~/types/security';
 import type { ExtensionMessage } from '~/types/messages';
@@ -10,6 +11,7 @@ import '~/style.css';
 
 export default function PopupIndex() {
   const [mediaList, setMediaList] = useState<MediaMetadata[]>([]);
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [currentDomain, setCurrentDomain] = useState<string>('');
   const [securityStatus, setSecurityStatus] = useState<SecurityStatus>('SAFE');
   const [blockedAdsCount, setBlockedAdsCount] = useState<number>(0);
@@ -18,16 +20,25 @@ export default function PopupIndex() {
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
   useEffect(() => {
-    // Load active tab info and media list
     const initPopup = async () => {
       try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (tab?.url) {
           const urlObj = new URL(tab.url);
-          setCurrentDomain(urlObj.hostname);
+          const domain = urlObj.hostname;
+          setCurrentDomain(domain);
+
+          // Cek status whitelist
+          const storage = await chrome.storage.local.get(['whitelistedDomains']);
+          const whitelisted: string[] = storage.whitelistedDomains || [];
+          setIsEnabled(!whitelisted.includes(domain));
+
+          // Verifikasi status keamanan domain
+          const secResult = await LinkVerifierService.verifyUrl(tab.url);
+          setSecurityStatus(secResult.status);
         }
 
-        // Request detected media from background worker
+        // Ambil daftar media terdeteksi dari background service worker
         chrome.runtime.sendMessage(
           { type: 'GET_TAB_MEDIA_REQUEST', payload: { tabId: tab?.id } },
           (response) => {
@@ -45,6 +56,30 @@ export default function PopupIndex() {
     initPopup();
   }, []);
 
+  const handleToggleProtection = async () => {
+    if (!currentDomain) return;
+    const newEnabledState = !isEnabled;
+    setIsEnabled(newEnabledState);
+
+    if (!newEnabledState) {
+      await LinkVerifierService.whitelistDomain(currentDomain);
+      setToast({
+        id: Date.now().toString(),
+        type: 'warning',
+        title: 'Proteksi Dinonaktifkan',
+        message: `Proteksi untuk ${currentDomain} telah dinonaktifkan.`
+      });
+    } else {
+      await LinkVerifierService.removeWhitelistedDomain(currentDomain);
+      setToast({
+        id: Date.now().toString(),
+        type: 'success',
+        title: 'Proteksi Diaktifkan',
+        message: `Proteksi untuk ${currentDomain} telah aktif kembali.`
+      });
+    }
+  };
+
   const handlePlayClean = (media: MediaMetadata) => {
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       if (tab?.id) {
@@ -53,7 +88,7 @@ export default function PopupIndex() {
           payload: media
         };
         chrome.tabs.sendMessage(tab.id, msg);
-        window.close(); // Close popup so user can watch directly on overlay
+        window.close();
       }
     });
   };
@@ -79,6 +114,11 @@ export default function PopupIndex() {
     chrome.runtime.sendMessage(msg);
   };
 
+  const filteredMedia = mediaList.filter((m) =>
+    (m.pageTitle || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+    m.formatCategory.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   return (
     <div className="w-[360px] h-[480px] bg-white dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 flex flex-col font-sans select-none overflow-hidden">
       {/* Toast Notification Container */}
@@ -90,18 +130,34 @@ export default function PopupIndex() {
         securityStatus={securityStatus}
         blockedAdsCount={blockedAdsCount}
         isEnabled={isEnabled}
-        onToggleEnabled={() => setIsEnabled(!isEnabled)}
+        onToggleEnabled={handleToggleProtection}
       />
 
       {/* Body: Media List */}
       <main className="flex-1 overflow-y-auto p-3.5 space-y-3">
-        <div className="flex items-center justify-between px-1">
-          <span className="text-[11px] font-bold text-zinc-500 dark:text-zinc-400 tracking-wider uppercase">
-            Media Terdeteksi ({mediaList.length})
+        {/* Search & Counter Bar */}
+        <div className="flex items-center justify-between px-1 gap-2">
+          <span className="text-[11px] font-bold text-zinc-500 dark:text-zinc-400 tracking-wider uppercase shrink-0">
+            Media ({filteredMedia.length})
           </span>
+
+          {mediaList.length > 2 && (
+            <div className="relative flex-1">
+              <Search className="w-3 h-3 text-zinc-400 absolute left-2 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Cari video..."
+                className="w-full pl-6 pr-2 py-0.5 bg-zinc-100 dark:bg-zinc-800 rounded-md text-[11px] text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+          )}
+
           <button
             onClick={() => window.location.reload()}
-            className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1"
+            className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 shrink-0"
+            title="Muat ulang pemindaian"
           >
             <RefreshCw className="w-3 h-3" />
             <span>Segarkan</span>
@@ -113,9 +169,9 @@ export default function PopupIndex() {
             <RefreshCw className="w-6 h-6 animate-spin text-blue-500" />
             <p className="text-xs font-medium">Memindai media halaman...</p>
           </div>
-        ) : mediaList.length > 0 ? (
+        ) : filteredMedia.length > 0 ? (
           <div className="space-y-2.5">
-            {mediaList.map((media) => (
+            {filteredMedia.map((media) => (
               <MediaCard
                 key={media.id}
                 media={media}
@@ -131,10 +187,12 @@ export default function PopupIndex() {
               <Film className="w-5 h-5" />
             </div>
             <h4 className="text-xs font-bold text-zinc-800 dark:text-zinc-200">
-              Belum Ada Video Terdeteksi
+              {searchQuery ? 'Video Tidak Ditemukan' : 'Belum Ada Video Terdeteksi'}
             </h4>
             <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1 leading-relaxed">
-              Jelajahi halaman web atau mulai putar video untuk mendeteksi stream media secara otomatis.
+              {searchQuery
+                ? 'Tidak ada video yang cocok dengan kata kunci pencarian Anda.'
+                : 'Jelajahi halaman web atau mulai putar video untuk mendeteksi stream media secara otomatis.'}
             </p>
           </div>
         )}

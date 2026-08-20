@@ -1,10 +1,11 @@
 ﻿import cssText from 'data-text:~style.css';
 import type { PlasmoCSConfig, PlasmoGetStyle } from 'plasmo';
 import React, { useState, useEffect } from 'react';
-import { Film, Play, Download, X, Layers, ChevronUp, ChevronDown } from 'lucide-react';
+import { Play, Download, X, Layers, ChevronUp, ChevronDown, ShieldCheck } from 'lucide-react';
 import { CleanPlayerModal } from '~/components/clean-player/CleanPlayerModal';
 import { Toast, type ToastMessage } from '~/components/ui/Toast';
 import { Badge } from '~/components/ui/Badge';
+import { AdBlockerService } from '~/services/ad-blocker';
 import type { MediaMetadata } from '~/types/media';
 import type { ExtensionMessage } from '~/types/messages';
 
@@ -27,9 +28,15 @@ export default function ContentOverlay() {
   const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [isBadgeVisible, setIsBadgeVisible] = useState<boolean>(true);
+  const [blockedAdsCount, setBlockedAdsCount] = useState<number>(0);
 
   useEffect(() => {
-    // Message listener dari Background Worker atau Popup
+    // 1. Inisialisasi pembersih overlay anti-klik DOM (Layer 2 Ad-Blocker)
+    const cleanupSanitizer = AdBlockerService.initDomSanitizer((count) => {
+      setBlockedAdsCount(count);
+    });
+
+    // 2. Message listener dari Background Worker atau Popup
     const messageListener = (message: ExtensionMessage) => {
       if (message.type === 'MEDIA_DETECTED') {
         setDetectedMediaList((prev) => {
@@ -46,6 +53,7 @@ export default function ContentOverlay() {
     chrome.runtime.onMessage.addListener(messageListener);
 
     return () => {
+      cleanupSanitizer();
       chrome.runtime.onMessage.removeListener(messageListener);
     };
   }, []);
@@ -78,8 +86,6 @@ export default function ContentOverlay() {
       setIsMenuOpen(!isMenuOpen);
     }
   };
-
-  const latestMedia = detectedMediaList[detectedMediaList.length - 1];
 
   return (
     <div className="font-sans antialiased select-none">
@@ -141,6 +147,17 @@ export default function ContentOverlay() {
                   </div>
                 ))}
               </div>
+
+              {/* Blocked Ads Status Banner in Menu */}
+              {blockedAdsCount > 0 && (
+                <div className="flex items-center justify-between px-2 py-1 rounded-lg bg-emerald-950/50 border border-emerald-800/50 text-[10px] text-emerald-300">
+                  <span className="flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                    <span>Overlay Iklan Dibersihkan</span>
+                  </span>
+                  <span className="font-bold">{blockedAdsCount}</span>
+                </div>
+              )}
             </div>
           )}
 

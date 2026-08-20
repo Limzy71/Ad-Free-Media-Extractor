@@ -36,6 +36,7 @@
     "description": "All-in-one browser extension: Smart link security, universal ad-blocker, and clean media player/downloader.",
     "permissions": [
       "declarativeNetRequest",
+      "declarativeNetRequestFeedback",
       "webRequest",
       "webNavigation",
       "downloads",
