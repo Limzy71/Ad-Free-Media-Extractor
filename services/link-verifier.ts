@@ -1,8 +1,35 @@
-﻿import type { SecurityVerificationResult, SecurityStatus, ThreatCategory } from '~/types/security';
+﻿import type { SecurityVerificationResult, ThreatCategory } from '~/types/security';
+
+const BACKEND_API_URL = 'http://127.0.0.1:8000/api';
+
+interface BackendVerifyResponse {
+  status: string;
+  data: {
+    url: string;
+    domain: string;
+    is_safe: boolean;
+    threat_category: string | null;
+    risk_score: number;
+  };
+}
+
+const THREAT_MAP: Record<string, ThreatCategory> = {
+  gambling: 'GAMBLING',
+  phishing: 'PHISHING',
+  malware: 'MALWARE'
+};
+
+const THREAT_DESCRIPTIONS: Record<ThreatCategory, string> = {
+  GAMBLING: 'Situs ini terindikasi sebagai platform perjudian online ilegal.',
+  PHISHING: 'Situs ini terindikasi mencoba mencuri data pribadi atau kredensial akun.',
+  MALWARE: 'Situs ini terindikasi mendistribusikan berkas berbahaya atau malware.',
+  CLICKJACKING: 'Situs ini terindikasi menggunakan teknik clickjacking.',
+  SUSPICIOUS: 'Situs ini terindikasi mencurigakan.'
+};
 
 /**
  * Service untuk memverifikasi reputasi URL terhadap basis data ancaman (Phishing, Malware, Judi)
- * Dilengkapi in-memory LRU cache dan domain whitelisting
+ * Strategi: Local Fast-Cache → Backend API → Local Keyword Fallback
  */
 export class LinkVerifierService {
   private static cache = new Map<string, SecurityVerificationResult>();
@@ -39,7 +66,7 @@ export class LinkVerifierService {
   ];
 
   /**
-   * Cek reputasi URL secara lokal dan cepat (Fast-Cache)
+   * Cek reputasi URL dengan strategi berlapis: cache → backend → fallback lokal
    */
   public static async verifyUrl(url: string): Promise<SecurityVerificationResult> {
     if (!url || !url.startsWith('http')) {
@@ -57,12 +84,12 @@ export class LinkVerifierService {
       const urlObj = new URL(url);
       const domain = urlObj.hostname.toLowerCase();
 
-      // Cek in-memory cache
+      // Layer 1: In-memory cache
       if (this.cache.has(domain)) {
         return this.cache.get(domain)!;
       }
 
-      // Cek apakah domain di-whitelist oleh user
+      // Layer 1b: Whitelist check
       const whitelistStorage = await chrome.storage.local.get(['whitelistedDomains']);
       const whitelistedDomains: string[] = whitelistStorage.whitelistedDomains || [];
       if (whitelistedDomains.includes(domain)) {
@@ -78,40 +105,17 @@ export class LinkVerifierService {
         return safeResult;
       }
 
-      // Evaluasi Kategori Ancaman
-      let threatCategory: ThreatCategory | undefined;
-      let threatDescription: string | undefined;
-      let riskScore = 0;
-
-      if (this.gamblingKeywords.some((k) => domain.includes(k) || urlObj.pathname.includes(k))) {
-        threatCategory = 'GAMBLING';
-        threatDescription = 'Situs ini terindikasi sebagai platform perjudian online ilegal.';
-        riskScore = 95;
-      } else if (this.phishingKeywords.some((k) => domain.includes(k))) {
-        threatCategory = 'PHISHING';
-        threatDescription = 'Situs ini terindikasi mencoba mencuri data pribadi atau kredensial akun.';
-        riskScore = 90;
-      } else if (this.malwareKeywords.some((k) => domain.includes(k))) {
-        threatCategory = 'MALWARE';
-        threatDescription = 'Situs ini terindikasi mendistribusikan berkas berbahaya atau malware.';
-        riskScore = 99;
+      // Layer 2: Backend API
+      const backendResult = await this.verifyViaBackend(url, domain);
+      if (backendResult !== null) {
+        this.cache.set(domain, backendResult);
+        return backendResult;
       }
 
-      const status: SecurityStatus = threatCategory ? 'BLOCKED' : 'SAFE';
-
-      const result: SecurityVerificationResult = {
-        url,
-        domain,
-        status,
-        threatCategory,
-        threatDescription,
-        riskScore,
-        isCached: true,
-        verifiedAtTimestamp: Date.now()
-      };
-
-      this.cache.set(domain, result);
-      return result;
+      // Layer 3: Local keyword fallback (offline / backend unreachable)
+      const fallbackResult = this.verifyLocally(url, domain);
+      this.cache.set(domain, fallbackResult);
+      return fallbackResult;
     } catch {
       return {
         url,
@@ -122,6 +126,86 @@ export class LinkVerifierService {
         verifiedAtTimestamp: Date.now()
       };
     }
+  }
+
+  /**
+   * Verifikasi URL melalui backend API (dengan timeout singkat)
+   */
+  private static async verifyViaBackend(
+    url: string,
+    domain: string
+  ): Promise<SecurityVerificationResult | null> {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+      const response = await fetch(`${BACKEND_API_URL}/v1/verify-link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) return null;
+
+      const json: BackendVerifyResponse = await response.json();
+      if (json.status !== 'success') return null;
+
+      const { data } = json;
+      const threatCategory = data.threat_category
+        ? THREAT_MAP[data.threat_category] ?? undefined
+        : undefined;
+
+      return {
+        url: data.url,
+        domain: data.domain,
+        status: data.is_safe ? 'SAFE' : 'BLOCKED',
+        threatCategory,
+        threatDescription: threatCategory ? THREAT_DESCRIPTIONS[threatCategory] : undefined,
+        riskScore: data.risk_score,
+        isCached: false,
+        verifiedAtTimestamp: Date.now()
+      };
+    } catch {
+      // Backend unreachable — fall through to local fallback
+      return null;
+    }
+  }
+
+  /**
+   * Verifikasi lokal berbasis keyword (fallback saat backend tidak tersedia)
+   */
+  private static verifyLocally(url: string, domain: string): SecurityVerificationResult {
+    let threatCategory: ThreatCategory | undefined;
+    let threatDescription: string | undefined;
+    let riskScore = 0;
+
+    if (this.gamblingKeywords.some((k) => domain.includes(k) || url.includes(k))) {
+      threatCategory = 'GAMBLING';
+      threatDescription = THREAT_DESCRIPTIONS.GAMBLING;
+      riskScore = 95;
+    } else if (this.phishingKeywords.some((k) => domain.includes(k) || url.includes(k))) {
+      threatCategory = 'PHISHING';
+      threatDescription = THREAT_DESCRIPTIONS.PHISHING;
+      riskScore = 90;
+    } else if (this.malwareKeywords.some((k) => domain.includes(k) || url.includes(k))) {
+      threatCategory = 'MALWARE';
+      threatDescription = THREAT_DESCRIPTIONS.MALWARE;
+      riskScore = 99;
+    }
+
+    return {
+      url,
+      domain,
+      status: threatCategory ? 'BLOCKED' : 'SAFE',
+      threatCategory,
+      threatDescription,
+      riskScore,
+      isCached: false,
+      verifiedAtTimestamp: Date.now()
+    };
   }
 
   /**
