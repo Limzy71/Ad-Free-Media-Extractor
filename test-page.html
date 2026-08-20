@@ -1,0 +1,119 @@
+﻿<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Streaming Web Portal - Demo Uji Coba UI/UX Ekstensi</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    /* Simulasi overlay iklan transparan penangkap klik (Clickjacking Layer) */
+    .fake-ad-clickjacking-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 9999999;
+      background: rgba(0, 0, 0, 0);
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen font-sans antialiased">
+
+  <!-- Navbar -->
+  <header class="border-b border-zinc-800 bg-zinc-900/80 backdrop-blur sticky top-0 z-40 px-6 py-3.5 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center font-bold text-white shadow-lg">
+        ▶
+      </div>
+      <div>
+        <h1 class="text-sm font-bold tracking-tight text-white">StreamFlix Hub</h1>
+        <p class="text-[10px] text-zinc-400">Portal Uji Coba Ekstensi Media Extractor</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="px-2.5 py-1 rounded-full bg-emerald-950/80 border border-emerald-700/60 text-emerald-300 text-xs font-semibold">
+        ● Live Test Environment
+      </span>
+    </div>
+  </header>
+
+  <!-- Main Content Grid -->
+  <main class="max-w-6xl mx-auto p-6 space-y-8">
+    
+    <!-- Hero / Main Video Player Section -->
+    <section class="space-y-3">
+      <div class="flex items-center justify-between">
+        <div>
+          <span class="px-2 py-0.5 rounded bg-blue-900/60 text-blue-300 text-[10px] font-bold uppercase tracking-wider">
+            Video Utama (MP4 Stream)
+          </span>
+          <h2 class="text-xl font-bold text-white mt-1">Big Buck Bunny - 1080p Original Animation</h2>
+        </div>
+        <div class="text-xs text-zinc-400">
+          Uji coba: Injected Floating Badge, Clean Player Modal & PiP
+        </div>
+      </div>
+
+      <!-- Video Container -->
+      <div class="relative w-full aspect-video bg-black rounded-2xl overflow-hidden shadow-2xl border border-zinc-800 group">
+        <!-- Simulasi Invisible Overlay Iklan (Akan dibersihkan otomatis oleh ekstensi) -->
+        <div class="fake-ad-clickjacking-overlay" id="adOverlay" title="Overlay iklan ini akan dihapus otomatis oleh DOM Sanitizer ekstensi"></div>
+
+        <video id="mainVideo" controls class="w-full h-full object-contain" poster="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/images/BigBuckBunny.jpg">
+          <source src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4" type="video/mp4">
+          Browser Anda tidak mendukung tag video HTML5.
+        </video>
+      </div>
+    </section>
+
+    <!-- Secondary Video Stream (HLS Stream Section) -->
+    <section class="space-y-4 pt-4 border-t border-zinc-800">
+      <div>
+        <span class="px-2 py-0.5 rounded bg-purple-900/60 text-purple-300 text-[10px] font-bold uppercase tracking-wider">
+          Stream HLS Multikualitas (.m3u8)
+        </span>
+        <h3 class="text-lg font-bold text-white mt-1">Sintel Open Animation - Mux HLS Adaptive Stream</h3>
+        <p class="text-xs text-zinc-400 mt-0.5">Uji coba penangkapan playlist .m3u8 dan pengubah resolusi kualitas dinamis.</p>
+      </div>
+
+      <div class="max-w-3xl aspect-video bg-black rounded-2xl overflow-hidden shadow-xl border border-zinc-800 relative">
+        <video id="hlsVideo" controls class="w-full h-full object-contain"></video>
+      </div>
+    </section>
+
+    <!-- Test Threat Link Interception Section -->
+    <section class="p-5 rounded-2xl bg-zinc-900/70 border border-zinc-800 space-y-3">
+      <h3 class="text-sm font-bold text-white flex items-center gap-2">
+        <span>🛡️</span>
+        <span>Uji Coba Smart Link Verifier (Pencegat Tautan Berbahaya)</span>
+      </h3>
+      <p class="text-xs text-zinc-400">
+        Klik salah satu link uji coba di bawah ini untuk melihat bagaimana ekstensi langsung mencegat dan menampilkan halaman peringatan merah (<code class="text-zinc-300 font-mono">tabs/warning.html</code>):
+      </p>
+      <div class="flex flex-wrap gap-2.5 pt-1">
+        <a href="http://slot88-gacor-online-test.com" class="px-3.5 py-2 rounded-xl bg-red-950/60 hover:bg-red-900/80 border border-red-700/60 text-red-200 text-xs font-semibold transition-colors">
+          🔗 Uji Coba: Situs Judi Slot (Akan Dicegat)
+        </a>
+        <a href="http://phishing-test-account-verification.com" class="px-3.5 py-2 rounded-xl bg-amber-950/60 hover:bg-amber-900/80 border border-amber-700/60 text-amber-200 text-xs font-semibold transition-colors">
+          🔗 Uji Coba: Link Phishing Akun (Akan Dicegat)
+        </a>
+      </div>
+    </section>
+
+  </main>
+
+  <script>
+    // Inisialisasi Hls.js untuk video kedua
+    const hlsVideo = document.getElementById('hlsVideo');
+    const hlsUrl = 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8';
+
+    if (Hls.isSupported()) {
+      const hls = new Hls();
+      hls.loadSource(hlsUrl);
+      hls.attachMedia(hlsVideo);
+    } else if (hlsVideo.canPlayType('application/vnd.apple.mpegurl')) {
+      hlsVideo.src = hlsUrl;
+    }
+  </script>
+</body>
+</html>
