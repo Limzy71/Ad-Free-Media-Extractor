@@ -78,10 +78,30 @@ chrome.webRequest.onHeadersReceived.addListener(
         );
 
         const currentList = tabMediaMap.get(details.tabId) || [];
-        const isDuplicate = currentList.some((m) => m.sourceUrl === mediaItem.sourceUrl);
+        // Cek apakah URL persis sama (full duplicate)
+        const exactDuplicate = currentList.some((m) => m.sourceUrl === mediaItem.sourceUrl);
 
-        if (!isDuplicate) {
-          currentList.push(mediaItem);
+        if (!exactDuplicate) {
+          // Cek apakah ada entry lama dari domain yang sama dengan kualitas lebih rendah
+          const newScore = MediaSnifferService.qualityScore(mediaItem.sourceUrl, mediaItem.contentLengthBytes);
+          const lowerQualityIdx = currentList.findIndex((m) => {
+            try {
+              const sameDomain = new URL(m.sourceUrl).hostname === new URL(mediaItem.sourceUrl).hostname;
+              const sameFormat = m.formatCategory === mediaItem.formatCategory;
+              if (!sameDomain || !sameFormat) return false;
+              const oldScore = MediaSnifferService.qualityScore(m.sourceUrl, m.contentLengthBytes);
+              return newScore > oldScore;
+            } catch {
+              return false;
+            }
+          });
+
+          if (lowerQualityIdx >= 0) {
+            // Gantikan entry resolusi rendah dengan yang lebih tinggi
+            currentList[lowerQualityIdx] = mediaItem;
+          } else {
+            currentList.push(mediaItem);
+          }
           tabMediaMap.set(details.tabId, currentList);
 
           updateExtensionBadge(details.tabId, currentList.length);

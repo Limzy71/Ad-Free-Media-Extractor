@@ -1,4 +1,4 @@
-﻿import type { MediaMetadata, MediaMimeType, MediaFormatCategory } from '~/types/media';
+import type { MediaMetadata, MediaMimeType, MediaFormatCategory } from '~/types/media';
 
 /**
  * Service untuk menganalisis URL dan header HTTP guna mengekstrak informasi media
@@ -42,6 +42,35 @@ export class MediaSnifferService {
     }
 
     return 'MP4';
+  }
+
+  /**
+   * Scoring kualitas stream berdasarkan URL dan contentLength.
+   * Semakin tinggi score = semakin baik kualitasnya.
+   * Digunakan untuk menggantikan entry resolusi rendah yang sudah tersimpan.
+   */
+  public static qualityScore(url: string, contentLength?: number): number {
+    let score = 0;
+    const lower = url.toLowerCase();
+
+    // Bonus dari indikator resolusi eksplisit di URL
+    if (lower.includes('2160p') || lower.includes('4k')) score += 4000;
+    else if (lower.includes('1080p') || lower.includes('fhd')) score += 3000;
+    else if (lower.includes('720p') || lower.includes('hd')) score += 2000;
+    else if (lower.includes('480p') || lower.includes('sd')) score += 1000;
+    else if (lower.includes('360p') || lower.includes('240p')) score += 100;
+
+    // Bonus dari label kualitas di path/query
+    if (lower.includes('/high/') || lower.includes('quality=high')) score += 500;
+    if (lower.includes('/medium/') || lower.includes('quality=medium')) score += 250;
+    if (lower.includes('/low/') || lower.includes('quality=low')) score -= 500;
+
+    // Bonus dari ukuran file (contentLength sebagai proxy kualitas)
+    if (contentLength) {
+      score += Math.round(contentLength / (1024 * 1024)); // +1 per MB
+    }
+
+    return score;
   }
 
   /**
