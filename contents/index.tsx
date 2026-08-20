@@ -34,6 +34,15 @@ export default function ContentOverlay() {
     // 1. Inisialisasi pembersih overlay anti-klik DOM (Layer 2 Ad-Blocker)
     const cleanupSanitizer = AdBlockerService.initDomSanitizer((count) => {
       setBlockedAdsCount(count);
+      // Laporkan jumlah iklan yang dibersihkan ke Background Service Worker
+      chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+        if (tab?.id) {
+          chrome.runtime.sendMessage({
+            type: 'ADS_BLOCKED_COUNT_UPDATE',
+            payload: { tabId: tab.id, count }
+          });
+        }
+      });
     });
 
     // 2. Message listener dari Background Worker atau Popup

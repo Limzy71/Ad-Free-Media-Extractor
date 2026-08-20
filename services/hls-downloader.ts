@@ -1,4 +1,4 @@
-import type { MediaFormatCategory, StreamDownloadProgress } from '~/types/media';
+import type { StreamDownloadProgress } from '~/types/media';
 
 /**
  * Service untuk mengunduh berkas media langsung (.mp4, .webm) atau orkestrasi HLS (.m3u8)
@@ -62,7 +62,8 @@ export class DownloaderService {
           status: 'COMPLETED'
         });
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Gagal mengunduh stream HLS.';
       if (onProgress) {
         onProgress({
           mediaId: m3u8Url,
@@ -71,10 +72,10 @@ export class DownloaderService {
           percentage: 0,
           downloadedBytes: 0,
           status: 'FAILED',
-          errorMessage: err.message || 'Gagal mengunduh stream HLS.'
+          errorMessage: message
         });
       }
-      throw err;
+      throw new Error(message);
     }
   }
 }

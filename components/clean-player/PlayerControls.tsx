@@ -56,7 +56,6 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
   onDownload
 }) => {
   const [hoverTime, setHoverTime] = useState<number | null>(null);
-  const [hoverX, setHoverX] = useState<number>(0);
 
   const formatTime = (seconds: number): string => {
     if (isNaN(seconds) || seconds < 0) return '0:00';
@@ -71,7 +70,6 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
     const rect = e.currentTarget.getBoundingClientRect();
     const pos = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     setHoverTime(pos * duration);
-    setHoverX(e.clientX - rect.left);
   };
 
   return (
@@ -83,10 +81,10 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
         onMouseLeave={() => setHoverTime(null)}
       >
         {/* Tooltip Preview */}
-        {hoverTime !== null && (
+        {hoverTime !== null && duration > 0 && (
           <div
             className="absolute -top-7 px-1.5 py-0.5 bg-zinc-900 text-white text-[10px] font-mono rounded shadow border border-white/10 -translate-x-1/2 pointer-events-none"
-            style={{ left: `${hoverX}px` }}
+            style={{ left: `${(hoverTime / duration) * 100}%` }}
           >
             {formatTime(hoverTime)}
           </div>

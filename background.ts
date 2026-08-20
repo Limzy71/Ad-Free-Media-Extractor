@@ -8,6 +8,9 @@ import type { ExtensionMessage } from '~/types/messages';
 // Penyimpanan media aktif di memori per tabId
 const tabMediaMap = new Map<number, MediaMetadata[]>();
 
+// Penyimpanan jumlah iklan/tracker yang dibersihkan per tab
+const tabBlockedAdsMap = new Map<number, number>();
+
 /**
  * 0. Inisialisasi Aturan Pemblokir Iklan Dinamis (DNR Rulesets)
  */
@@ -103,11 +106,13 @@ chrome.webRequest.onHeadersReceived.addListener(
  */
 chrome.tabs.onRemoved.addListener((tabId) => {
   tabMediaMap.delete(tabId);
+  tabBlockedAdsMap.delete(tabId);
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === 'loading') {
     tabMediaMap.delete(tabId);
+    tabBlockedAdsMap.delete(tabId);
     updateExtensionBadge(tabId, 0);
   }
 });
@@ -156,6 +161,18 @@ chrome.runtime.onMessage.addListener(
           DownloaderService.downloadDirectMedia(sourceUrl, filename).catch(console.error);
         }
         sendResponse({ success: true });
+        return false;
+      }
+
+      case 'ADS_BLOCKED_COUNT_UPDATE': {
+        const { tabId, count } = message.payload;
+        tabBlockedAdsMap.set(tabId, count);
+        return false;
+      }
+
+      case 'GET_ADS_BLOCKED_COUNT': {
+        const blocked = tabBlockedAdsMap.get(message.payload.tabId) || 0;
+        sendResponse({ count: blocked });
         return false;
       }
     }

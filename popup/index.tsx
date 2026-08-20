@@ -48,6 +48,18 @@ export default function PopupIndex() {
             setIsLoading(false);
           }
         );
+
+        // Ambil jumlah iklan yang dibersihkan dari background
+        if (tab?.id) {
+          chrome.runtime.sendMessage(
+            { type: 'GET_ADS_BLOCKED_COUNT', payload: { tabId: tab.id } },
+            (response) => {
+              if (response?.count !== undefined) {
+                setBlockedAdsCount(response.count);
+              }
+            }
+          );
+        }
       } catch (err) {
         setIsLoading(false);
       }

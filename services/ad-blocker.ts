@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Service untuk membersihkan elemen DOM intrusif dan mengonfigurasi declarativeNetRequest
  */
 export class AdBlockerService {
@@ -55,31 +55,89 @@ export class AdBlockerService {
   }
 
   /**
+   * Daftar pola class/id yang umum digunakan oleh elemen iklan/overlay
+   */
+  private static readonly AD_OVERLAY_PATTERNS: RegExp[] = [
+    /ad[_-]?overlay/i,
+    /ad[_-]?wrapper/i,
+    /pop[_-]?under/i,
+    /click[_-]?hijack/i,
+    /clickjacking/i,
+    /interstitial[_-]?ad/i,
+    /preroll/i,
+    /midroll/i,
+    /sticky[_-]?ad/i,
+    /floating[_-]?ad/i,
+    /video[_-]?overlay/i,
+    /video[_-]?preroll/i,
+    /ima[_-]?ad/i,
+    /googima/i,
+    /adsbygoogle/i
+  ];
+
+  /**
+   * Selector Plasmo yang harus selalu dikecualikan
+   */
+  private static readonly PLASMO_SELECTORS = [
+    '[id*="plasmo"]',
+    '[id*="p_"]',
+    '[class*="plasmo"]',
+    'plasmo-csui'
+  ];
+
+  /**
    * Memulai pembersihan proaktif elemen anti-klik dan overlay iklan pada halaman web
    */
   public static initDomSanitizer(onElementBlocked?: (count: number) => void): () => void {
     const cleanOverlays = () => {
-      const allDivs = document.querySelectorAll('div, iframe, a[target="_blank"]');
+      // Kumpulkan semua kandidat overlay
+      const candidates = document.querySelectorAll('div, iframe');
 
-      allDivs.forEach((el) => {
+      candidates.forEach((el) => {
         const htmlEl = el as HTMLElement;
+
+        // Selalu kecualikan elemen Plasmo/Shadow DOM
+        if (htmlEl.closest(this.PLASMO_SELECTORS.join(','))) return;
+
+        // Selalu kecualikan elemen yang memiliki interaksi (button, input, link)
+        if (htmlEl.querySelector('button, input, select, textarea, a[href]')) return;
+
         const style = window.getComputedStyle(htmlEl);
 
-        const isHighZIndex = parseInt(style.zIndex, 10) > 9999;
+        // Hindari elemen yang tidak di-positioning tinggi
         const isFixedOrAbsolute = style.position === 'fixed' || style.position === 'absolute';
-        const isTransparent = parseFloat(style.opacity) < 0.1 || style.backgroundColor === 'rgba(0, 0, 0, 0)';
+        if (!isFixedOrAbsolute) return;
 
-        const isFullCover =
-          htmlEl.offsetWidth > window.innerWidth * 0.7 &&
-          htmlEl.offsetHeight > window.innerHeight * 0.7 &&
-          htmlEl.innerText.trim().length === 0;
+        const zIndex = parseInt(style.zIndex, 10);
+        // Hanya target z-index sangat tinggi (> 999999 untuk overlay iklan, bukan 9999 untuk modals UI)
+        if (isNaN(zIndex) || zIndex <= 999999) return;
 
-        if (isHighZIndex && isFixedOrAbsolute && (isTransparent || isFullCover)) {
-          if (!htmlEl.id?.includes('plasmo') && !htmlEl.tagName.toLowerCase().includes('plasmo')) {
-            htmlEl.remove();
-            this.blockedCount += 1;
-            if (onElementBlocked) onElementBlocked(this.blockedCount);
-          }
+        // Cek apakah elemen memiliki pola class/id iklan yang dikenal
+        const hasAdPattern = this.AD_OVERLAY_PATTERNS.some(
+          (pattern) =>
+            pattern.test(htmlEl.id) ||
+            pattern.test(htmlEl.className.toString()) ||
+            (htmlEl.getAttribute('data-ad-slot') !== null)
+        );
+
+        // Cek apakah elemen transparan total (opacity sangat rendah + background transparan)
+        const opacity = parseFloat(style.opacity);
+        const bgColor = style.backgroundColor;
+        const isTransparent = (opacity < 0.05 || bgColor === 'rgba(0, 0, 0, 0)') && !hasAdPattern;
+
+        // Cek apakah elemen menutupi seluruh layar tanpa konten bermakna
+        const rect = htmlEl.getBoundingClientRect();
+        const coversFullPage =
+          rect.width > window.innerWidth * 0.9 &&
+          rect.height > window.innerHeight * 0.9 &&
+          htmlEl.innerText.trim().length === 0 &&
+          htmlEl.querySelectorAll('img, video, svg, canvas').length === 0;
+
+        // Hapus hanya jika: (1) ada pola iklan, ATAU (2) transparan + full cover + z-index sangat tinggi
+        if (hasAdPattern || (isTransparent && coversFullPage && zIndex > 999999)) {
+          htmlEl.remove();
+          this.blockedCount += 1;
+          if (onElementBlocked) onElementBlocked(this.blockedCount);
         }
       });
     };

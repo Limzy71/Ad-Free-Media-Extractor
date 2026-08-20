@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState } from 'react';
-import { ShieldAlert, AlertTriangle, ArrowLeft, ExternalLink, Shield } from 'lucide-react';
+import { ShieldAlert, AlertTriangle, ArrowLeft, Shield } from 'lucide-react';
 import '~/style.css';
 
 export default function WarningPage() {
@@ -39,8 +39,16 @@ export default function WarningPage() {
   };
 
   const handleBypass = () => {
-    if (targetUrl && targetUrl !== 'Tidak diketahui') {
-      window.location.href = targetUrl;
+    if (!targetUrl || targetUrl === 'Tidak diketahui') return;
+
+    // Validasi: hanya izinkan protokol HTTP/HTTPS, blokir javascript:, data:, vbscript:, dll
+    try {
+      const parsed = new URL(targetUrl);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        window.location.href = targetUrl;
+      }
+    } catch {
+      // URL tidak valid, abaikan navigasi
     }
   };
 

@@ -1,4 +1,4 @@
-import type { MediaMetadata, StreamDownloadProgress } from './media';
+import type { MediaMetadata } from './media';
 import type { SecurityVerificationResult } from './security';
 
 /**
@@ -16,17 +16,12 @@ export type ExtensionMessage =
       type: 'GET_TAB_MEDIA_REQUEST';
       payload: { tabId?: number };
     }
-  // Respon daftar media aktif
-  | {
-      type: 'GET_TAB_MEDIA_RESPONSE';
-      payload: { mediaList: MediaMetadata[] };
-    }
   // Request verifikasi URL
   | {
       type: 'VERIFY_URL_REQUEST';
       payload: { url: string };
     }
-  // Respon verifikasi URL
+  // Respon verifikasi URL (via sendResponse)
   | {
       type: 'VERIFY_URL_RESPONSE';
       payload: SecurityVerificationResult;
@@ -41,13 +36,18 @@ export type ExtensionMessage =
         formatCategory: MediaMetadata['formatCategory'];
       };
     }
-  // Update progres unduhan stream (HLS)
-  | {
-      type: 'DOWNLOAD_PROGRESS_UPDATE';
-      payload: StreamDownloadProgress;
-    }
   // Perintah membuka modal clean player di content script
   | {
       type: 'TRIGGER_CLEAN_PLAYER';
       payload: MediaMetadata;
+    }
+  // Content script melaporkan jumlah iklan/tracker yang dibersihkan
+  | {
+      type: 'ADS_BLOCKED_COUNT_UPDATE';
+      payload: { tabId: number; count: number };
+    }
+  // Popup meminta jumlah iklan yang dibersihkan dari background
+  | {
+      type: 'GET_ADS_BLOCKED_COUNT';
+      payload: { tabId: number };
     };
