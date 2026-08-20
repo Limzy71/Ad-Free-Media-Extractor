@@ -1,4 +1,4 @@
-﻿import { MediaSnifferService } from '~/services/media-sniffer';
+import { MediaSnifferService } from '~/services/media-sniffer';
 import { LinkVerifierService } from '~/services/link-verifier';
 import { DownloaderService } from '~/services/hls-downloader';
 import { AdBlockerService } from '~/services/ad-blocker';
@@ -156,7 +156,20 @@ chrome.runtime.onMessage.addListener(
       case 'START_MEDIA_DOWNLOAD': {
         const { sourceUrl, filename, formatCategory } = message.payload;
         if (formatCategory === 'HLS') {
-          DownloaderService.downloadHlsStream(sourceUrl, filename).catch(console.error);
+          DownloaderService.downloadHlsStream(sourceUrl, filename, (progress) => {
+            const progressMsg: ExtensionMessage = {
+              type: 'DOWNLOAD_PROGRESS_UPDATE',
+              payload: progress
+            };
+
+            // Broadcast ke tab pengirim
+            if (sender.tab?.id) {
+              chrome.tabs.sendMessage(sender.tab.id, progressMsg).catch(() => {});
+            }
+
+            // Broadcast ke popup / runtime
+            chrome.runtime.sendMessage(progressMsg).catch(() => {});
+          }).catch(console.error);
         } else {
           DownloaderService.downloadDirectMedia(sourceUrl, filename).catch(console.error);
         }
