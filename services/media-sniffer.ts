@@ -83,8 +83,14 @@ export class MediaSnifferService {
   ): boolean {
     const lowerUrl = url.toLowerCase();
 
+    // YouTube exclusion — Chrome Web Store policy compliance
+    if (lowerUrl.includes('youtube.com') || lowerUrl.includes('youtu.be')) {
+      return false;
+    }
+
     // Abaikan potongan segmen individual (.ts) dari sniffer agar tidak membanjiri notifikasi
-    if (lowerUrl.includes('.ts') && !lowerUrl.includes('.m3u8')) {
+    const urlPath = lowerUrl.split('?')[0];
+    if (urlPath.endsWith('.ts')) {
       return false;
     }
 

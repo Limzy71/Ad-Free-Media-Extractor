@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { ShieldAlert, AlertTriangle, ArrowLeft, Shield } from 'lucide-react';
 import '~/style.css';
 

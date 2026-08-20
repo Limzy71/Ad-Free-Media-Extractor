@@ -51,11 +51,11 @@ chrome.webRequest.onHeadersReceived.addListener(
     );
 
     const mimeType = contentTypeHeader?.value || 'unknown';
-    const contentLength = contentLengthHeader?.value
-      ? parseInt(contentLengthHeader.value, 10)
-      : undefined;
+    const rawLength = contentLengthHeader?.value;
+    const contentLength = rawLength ? parseInt(rawLength, 10) : undefined;
+    const safeContentLength = contentLength !== undefined && !isNaN(contentLength) ? contentLength : undefined;
 
-    if (MediaSnifferService.isValidMediaStream(details.url, mimeType, contentLength)) {
+    if (MediaSnifferService.isValidMediaStream(details.url, mimeType, safeContentLength)) {
       chrome.tabs.get(details.tabId, (tab) => {
         if (chrome.runtime.lastError || !tab) return;
 
@@ -74,7 +74,7 @@ chrome.webRequest.onHeadersReceived.addListener(
           tab.url,
           tab.title || '',
           mimeType,
-          contentLength
+          safeContentLength
         );
 
         const currentList = tabMediaMap.get(details.tabId) || [];
@@ -147,9 +147,9 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
 
   if (result.status === 'BLOCKED') {
     const warningUrl = chrome.runtime.getURL(
-      `tabs/warning.html?url=${encodeURIComponent(details.url)}&threat=${result.threatCategory || 'MALICIOUS'}`
+      `tabs/warning.html?url=${encodeURIComponent(details.url)}&threat=${result.threatCategory || 'SUSPICIOUS'}`
     );
-    chrome.tabs.update(details.tabId, { url: warningUrl });
+    chrome.tabs.update(details.tabId, { url: warningUrl }).catch(() => {});
   }
 });
 
@@ -160,7 +160,7 @@ chrome.runtime.onMessage.addListener(
   (message: ExtensionMessage, sender, sendResponse) => {
     switch (message.type) {
       case 'GET_TAB_MEDIA_REQUEST': {
-        const tabId = message.payload.tabId || sender.tab?.id;
+        const tabId = message.payload.tabId ?? sender.tab?.id;
         const mediaList = tabId ? tabMediaMap.get(tabId) || [] : [];
         sendResponse({ mediaList });
         return false;
