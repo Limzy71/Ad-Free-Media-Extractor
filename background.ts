@@ -45,14 +45,20 @@ chrome.webRequest.onHeadersReceived.addListener(
       chrome.tabs.get(details.tabId, (tab) => {
         if (chrome.runtime.lastError || !tab) return;
 
-        // Abaikan URL internal peramban
-        if (tab.url?.startsWith('chrome://') || tab.url?.startsWith('edge://') || tab.url?.startsWith('about:')) {
+        // Abaikan URL internal peramban & ekstensi
+        if (
+          !tab.url ||
+          tab.url.startsWith('chrome://') ||
+          tab.url.startsWith('edge://') ||
+          tab.url.startsWith('about:') ||
+          tab.url.startsWith('chrome-extension://')
+        ) {
           return;
         }
 
         const mediaItem = MediaSnifferService.createMediaMetadata(
           details.url,
-          tab.url || '',
+          tab.url,
           tab.title || '',
           mimeType,
           contentLength
@@ -102,14 +108,14 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
  * 3. Smart Link Verifier: Memeriksa navigasi ke situs berbahaya/judi
  */
 chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
-  // Hanya tangani frame utama (main frame)
-  if (details.frameId !== 0) return;
+  // Hanya tangani frame utama (main frame) dan URL publik (http/https)
+  if (details.frameId !== 0 || !details.url || !details.url.startsWith('http')) return;
 
   const result = await LinkVerifierService.verifyUrl(details.url);
 
   if (result.status === 'BLOCKED') {
     const warningUrl = chrome.runtime.getURL(
-      `warning.html?url=${encodeURIComponent(details.url)}&threat=${result.threatCategory || 'MALICIOUS'}`
+      `tabs/warning.html?url=${encodeURIComponent(details.url)}&threat=${result.threatCategory || 'MALICIOUS'}`
     );
     chrome.tabs.update(details.tabId, { url: warningUrl });
   }
