@@ -1,4 +1,4 @@
-﻿# Implementation Roadmap & Development Guide (ROADMAP.md)
+# Implementation Roadmap & Development Guide (ROADMAP.md)
 **Proyek:** Universal Ad-Free Media Extractor  
 **Versi:** 1.0 (Master Execution Plan)  
 **Status Proyek:** Siap Dieksekusi (*Ready for Development*)  
@@ -25,8 +25,8 @@ Sebelum memulai atau saat mengerjakan setiap tahapan, selalu rujuk dokumen spesi
 | **Fase 4** | Popup Extension Panel & Multi-Media Cards | `[x] Selesai` | Panel popup interaktif dengan Dark Mode & daftar video |
 | **Fase 5** | Smart Link Verifier & Red Warning Page | `[x] Selesai` | Pencegatan URL phishing/judi & halaman `warning.html` |
 | **Fase 6** | Universal Ad-Blocker Core (DNR & DOM Cleaner) | `[x] Selesai` | Pemblokiran iklan banner, pop-under, & overlay anti-klik |
-| **Fase 7** | Downloader Engine & HLS Segment Merger | `[ ] Belum Mulai` | Unduhan langsung MP4 & penggabungan segmen HLS `.ts` |
-| **Fase 8** | Backend Companion (Laravel 12 API) | `[ ] Belum Mulai` | Proxy CORS media & enkapsulasi API keamanan |
+| **Fase 7** | Downloader Engine & HLS Segment Merger | `[x] Selesai` | Unduhan langsung MP4 & penggabungan segmen HLS `.ts` |
+| **Fase 8** | Backend Companion (Laravel 13 API) | `[ ] Belum Mulai` | Proxy CORS media & enkapsulasi API keamanan |
 | **Fase 9** | Pengujian Komprehensif & Build Rilis | `[ ] Belum Mulai` | Paket ekstensi teruji bebas bug untuk distribusi |
 
 ---
@@ -89,19 +89,19 @@ Sebelum memulai atau saat mengerjakan setiap tahapan, selalu rujuk dokumen spesi
 
 ---
 
-### ðŸ“¥ **Fase 7: Downloader Engine & HLS Segment Merger**
-*   [ ] Implementasikan pengunduhan direct stream (`.mp4`, `.webm`) menggunakan `chrome.downloads.download()`.
-*   [ ] Integrasikan pustaka penggabung segmen stream (`mux.js` / TS downloader) untuk stream `.m3u8`:
+### 📥 **Fase 7: Downloader Engine & HLS Segment Merger**
+*   [x] Implementasikan pengunduhan direct stream (`.mp4`, `.webm`) menggunakan `chrome.downloads.download()`.
+*   [x] Integrasikan pustaka penggabung segmen stream (`mux.js` / TS downloader) untuk stream `.m3u8`:
     *   Mengunduh berkas index playlist `.m3u8`.
     *   Mengunduh seluruh segmen `.ts` secara asinkron sekuensial.
     *   Menggabungkan dan mentransmux segmen menjadi file `.mp4` utuh di browser.
-*   [ ] Tampilkan status progres unduhan (*dynamic progress bar*) pada tombol dan notifikasi Toast.
+*   [x] Tampilkan status progres unduhan (*dynamic progress bar*) pada tombol dan notifikasi Toast.
 *   *Kriteria Selesai:* Mengunduh video `.m3u8` menghasilkan file `.mp4` utuh yang dapat diputar secara offline di pemutar media komputer.
 
 ---
 
-### ðŸŒ **Fase 8: Backend Companion (Laravel 12 API)**
-*   [ ] Setup proyek Laravel 12 di environment lokal menggunakan Laravel Herd on Windows.
+### ðŸŒ **Fase 8: Backend Companion (Laravel 13 API)**
+*   [ ] Setup proyek Laravel 13 di environment lokal menggunakan Laravel Herd on Windows.
 *   [ ] Buat controller & endpoint `POST /api/v1/verify-link` (terkoneksi ke Google Safe Browsing / PhishTank API dengan secret key aman).
 *   [ ] Buat endpoint `POST /api/v1/proxy-media` untuk menangani pembatasan CORS saat browser klien mem-fetch stream video.
 *   [ ] Terapkan caching Redis/File pada backend untuk verifikasi URL agar response time < 50ms.

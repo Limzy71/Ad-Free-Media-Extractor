@@ -121,8 +121,8 @@ flowchart TD
 * **Media & Stream Engine:** `hls.js` (HLS playback) & `mux.js` (TS to MP4 segment merger).
 * **Penyimpanan Lokal:** `chrome.storage.local` untuk konfigurasi preferensi & whitelist domain.
 
-### 5.2. Web Companion / Proxy API (Laravel 12)
-* **Framework:** Laravel 12 (PHP 8.3+).
+### 5.2. Web Companion / Proxy API (Laravel 13)
+* **Framework:** Laravel 13 (PHP 8.3+).
 * **Lingkungan Pengembangan:** Laravel Herd on Windows (zero-config local domain & SSL).
 * **Arsitektur Backend:** Stateless REST API (tanpa autentikasi pengguna, rate-limited by client IP).
 
@@ -185,7 +185,7 @@ gantt
     dateFormat  YYYY-MM-DD
     section Fase 1: Setup & Core
     Inisialisasi Plasmo & Tailwind v4       :active, p1, 2026-08-21, 2d
-    Setup Laravel 12 Companion & Herd       :active, p2, 2026-08-21, 2d
+    Setup Laravel 13 Companion & Herd       :active, p2, 2026-08-21, 2d
     section Fase 2: UI & Detection
     Shadow DOM Injected Overlay & Popup     :p3, after p1, 3d
     Media Sniffer (MP4/WebM/M3U8)           :p4, after p1, 3d
