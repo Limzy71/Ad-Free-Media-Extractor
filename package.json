@@ -1,0 +1,51 @@
+{
+  "name": "universal-ad-free-media-extractor",
+  "displayName": "Universal Ad-Free Media Extractor",
+  "version": "1.0.0",
+  "description": "All-in-one browser extension: Smart link security, universal ad-blocker, and clean media player/downloader.",
+  "author": "Universal Media Extractor",
+  "packageManager": "npm@11.6.2",
+  "scripts": {
+    "dev": "plasmo dev",
+    "build": "plasmo build",
+    "package": "plasmo package"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "hls.js": "^1.5.17",
+    "lucide-react": "^0.475.0",
+    "mux.js": "^7.1.0",
+    "plasmo": "0.90.5",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tailwind-merge": "^3.0.1"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.308",
+    "@types/node": "^22.13.4",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.5.2",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3"
+  },
+  "manifest": {
+    "name": "Universal Ad-Free Media Extractor",
+    "version": "1.0.0",
+    "description": "All-in-one browser extension: Smart link security, universal ad-blocker, and clean media player/downloader.",
+    "permissions": [
+      "declarativeNetRequest",
+      "webRequest",
+      "webNavigation",
+      "downloads",
+      "storage",
+      "activeTab",
+      "tabs",
+      "scripting"
+    ],
+    "host_permissions": [
+      "<all_urls>"
+    ]
+  }
+}
