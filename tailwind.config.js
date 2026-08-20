@@ -4,7 +4,8 @@ module.exports = {
   darkMode: "media",
   content: [
     "./popup/**/*.{ts,tsx}",
-    "./content/**/*.{ts,tsx}",
+    "./contents/**/*.{ts,tsx}",
+    "./tabs/**/*.{ts,tsx}",
     "./components/**/*.{ts,tsx}",
     "./*.{ts,tsx}"
   ],

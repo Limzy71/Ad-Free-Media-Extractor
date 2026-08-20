@@ -11,6 +11,17 @@ dist/
 # Environment files & Local settings
 .env
 .env*.local
+backend/.env
+backend/.env.local
+
+# Laravel backend vendor & generated artifacts
+backend/vendor/
+backend/node_modules/
+backend/storage/logs/
+backend/storage/framework/cache/
+backend/storage/framework/sessions/
+backend/storage/framework/views/
+backend/bootstrap/cache/
 
 # Logs
 npm-debug.log*

@@ -1,4 +1,4 @@
-import type { MediaMetadata } from './media';
+import type { MediaMetadata, StreamDownloadProgress } from './media';
 import type { SecurityVerificationResult } from './security';
 
 /**
@@ -35,6 +35,11 @@ export type ExtensionMessage =
         filename: string;
         formatCategory: MediaMetadata['formatCategory'];
       };
+    }
+  // Update progres unduhan stream (HLS)
+  | {
+      type: 'DOWNLOAD_PROGRESS_UPDATE';
+      payload: StreamDownloadProgress;
     }
   // Perintah membuka modal clean player di content script
   | {
