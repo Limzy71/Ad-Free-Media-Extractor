@@ -1,4 +1,4 @@
-import { MediaSnifferService } from '~/services/media-sniffer';
+﻿import { MediaSnifferService } from '~/services/media-sniffer';
 import { LinkVerifierService } from '~/services/link-verifier';
 import { DownloaderService } from '~/services/hls-downloader';
 import type { MediaMetadata } from '~/types/media';
@@ -8,11 +8,25 @@ import type { ExtensionMessage } from '~/types/messages';
 const tabMediaMap = new Map<number, MediaMetadata[]>();
 
 /**
+ * Mengupdate indikator badge pada ikon ekstensi di toolbar browser
+ */
+function updateExtensionBadge(tabId: number, count: number): void {
+  if (tabId < 0) return;
+
+  if (count > 0) {
+    chrome.action.setBadgeText({ tabId, text: count.toString() });
+    chrome.action.setBadgeBackgroundColor({ tabId, color: '#2563eb' });
+  } else {
+    chrome.action.setBadgeText({ tabId, text: '' });
+  }
+}
+
+/**
  * 1. Background Media Sniffer: Memantau lalu lintas header HTTP
  */
 chrome.webRequest.onHeadersReceived.addListener(
   (details) => {
-    // Abaikan jika bukan di tab normal
+    // Abaikan jika bukan di tab normal atau request internal ekstensi
     if (details.tabId < 0) return;
 
     const contentTypeHeader = details.responseHeaders?.find(
@@ -31,6 +45,11 @@ chrome.webRequest.onHeadersReceived.addListener(
       chrome.tabs.get(details.tabId, (tab) => {
         if (chrome.runtime.lastError || !tab) return;
 
+        // Abaikan URL internal peramban
+        if (tab.url?.startsWith('chrome://') || tab.url?.startsWith('edge://') || tab.url?.startsWith('about:')) {
+          return;
+        }
+
         const mediaItem = MediaSnifferService.createMediaMetadata(
           details.url,
           tab.url || '',
@@ -46,13 +65,16 @@ chrome.webRequest.onHeadersReceived.addListener(
           currentList.push(mediaItem);
           tabMediaMap.set(details.tabId, currentList);
 
-          // Beritahu Content Script tab tersebut
+          // Update badge counter di toolbar
+          updateExtensionBadge(details.tabId, currentList.length);
+
+          // Kirim pesan ke Content Script tab tersebut
           const msg: ExtensionMessage = {
             type: 'MEDIA_DETECTED',
             payload: mediaItem
           };
           chrome.tabs.sendMessage(details.tabId, msg).catch(() => {
-            // Content script mungkin belum termuat penuh, abaikan error
+            // Content script belum siap, abaikan
           });
         }
       });
@@ -63,7 +85,7 @@ chrome.webRequest.onHeadersReceived.addListener(
 );
 
 /**
- * 2. Pembersihan memori saat tab ditutup atau dimuat ulang
+ * 2. Pembersihan memori & reset badge saat tab ditutup atau dimuat ulang
  */
 chrome.tabs.onRemoved.addListener((tabId) => {
   tabMediaMap.delete(tabId);
@@ -72,6 +94,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === 'loading') {
     tabMediaMap.delete(tabId);
+    updateExtensionBadge(tabId, 0);
   }
 });
 
@@ -109,7 +132,7 @@ chrome.runtime.onMessage.addListener(
         LinkVerifierService.verifyUrl(message.payload.url).then((result) => {
           sendResponse(result);
         });
-        return true; // Keep channel open for async response
+        return true;
       }
 
       case 'START_MEDIA_DOWNLOAD': {
