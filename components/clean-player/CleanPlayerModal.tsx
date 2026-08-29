@@ -47,6 +47,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
   const [isLoadingMedia, setIsLoadingMedia] = useState<boolean>(true);
   const [isVertical, setIsVertical] = useState<boolean>(false);
   const [bypassStage, setBypassStage] = useState<'DIRECT' | 'CORS_BLOB' | 'BACKEND_PROXY' | 'DONE'>('DIRECT');
+  const [hlsProxyRetryCount, setHlsProxyRetryCount] = useState<number>(0);
 
   const youtubeVideoId = media ? (extractYouTubeId(media.sourceUrl) || extractYouTubeId(media.pageUrl)) : null;
 
@@ -75,7 +76,23 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
       media.mimeType === 'application/x-mpegURL' ||
       media.mimeType === 'application/vnd.apple.mpegurl';
 
+    // Bila pemutaran langsung gagal, arahkan stream HLS ke backend proxy (yang me-rewrite manifest)
+    const useHlsProxy = hlsProxyRetryCount > 0 && isHls;
+    const hlsSourceUrl = useHlsProxy
+      ? DohResolverService.getBackendProxyUrl(media.sourceUrl, media.pageUrl)
+      : media.sourceUrl;
+
     if (isHls) {
+      if (useHlsProxy && !Hls.isSupported()) {
+        setIsLoadingMedia(false);
+        setErrorDetails({
+          type: 'NETWORK',
+          title: 'Perlu Backend Proxy (HLS)',
+          message: 'Backend proxy (php artisan serve) diperlukan untuk melewati proteksi stream ini, tetapi browser tidak mendukung HLS melalui proxy.'
+        });
+        return () => {};
+      }
+
       if (Hls.isSupported()) {
         const hlsInstance = new Hls({
           enableWorker: true,
@@ -85,7 +102,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
         });
         hlsRef.current = hlsInstance;
 
-        hlsInstance.loadSource(media.sourceUrl);
+        hlsInstance.loadSource(hlsSourceUrl);
         hlsInstance.attachMedia(video);
 
         hlsInstance.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
@@ -99,7 +116,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
             setCurrentHlsLevel(data.levels.length - 1);
           }
           setIsLoadingMedia(false);
-          setBypassStage('DONE');
+          setBypassStage(useHlsProxy ? 'BACKEND_PROXY' : 'DONE');
           video.play().catch(() => setIsPlaying(false));
         });
 
@@ -111,20 +128,29 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
           const httpStatus = data.response?.code;
           if (data.fatal) {
             hlsInstance.destroy();
+            hlsRef.current = null;
+
+            // Fallback otomatis: direct -> backend proxy (kecuali sumber jelas sudah kadaluwarsa)
+            const isExpired = httpStatus === 404 || httpStatus === 410;
+            if (!isExpired && !useHlsProxy) {
+              setHlsProxyRetryCount(1);
+              return;
+            }
+
             setIsLoadingMedia(false);
-            if (httpStatus === 404 || httpStatus === 410) {
+            if (isExpired) {
               setErrorDetails({ type: 'EXPIRED', statusCode: httpStatus, title: 'Tautan Stream Kadaluwarsa (404 Not Found)', message: 'Berkas playlist stream .m3u8 sudah tidak ditemukan atau masa aktif tautan telah berakhir di server sumber.' });
             } else if (httpStatus === 403 || httpStatus === 401) {
-              setErrorDetails({ type: 'FORBIDDEN', statusCode: httpStatus, title: 'Akses Dibatasi oleh Server (403 Forbidden)', message: 'Server penyedia video memblokir izin pemutaran langsung (CORS / token sesi kadaluwarsa).' });
+              setErrorDetails({ type: 'FORBIDDEN', statusCode: httpStatus, title: 'Akses Dibatasi oleh Server (403 Forbidden)', message: 'Server penyedia video memblokir izin pemutaran langsung. Backend proxy (php artisan serve) mungkin gagal dijangkau atau menolak akses.' });
             } else if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-              setErrorDetails({ type: 'NETWORK', statusCode: httpStatus || 'Network', title: 'Koneksi ke Server Stream Terputus', message: 'Gagal mengunduh fragmen video HLS. Periksa koneksi internet Anda atau coba muat ulang.' });
+              setErrorDetails({ type: 'NETWORK', statusCode: httpStatus || 'Network', title: 'Koneksi ke Server Stream Terputus', message: 'Gagal mengunduh fragmen video HLS. Periksa koneksi internet Anda, atau pastikan backend proxy (php artisan serve) aktif untuk bypass otomatis.' });
             } else {
               setErrorDetails({ type: 'FORMAT', title: 'Format Media HLS Tidak Kompatibel', message: 'Terjadi kesalahan saat mendekode segmen video dari server sumber.' });
             }
           }
         });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = media.sourceUrl;
+        video.src = hlsSourceUrl;
         video.play().catch(() => setIsPlaying(false));
       } else {
         setIsLoadingMedia(false);
@@ -140,7 +166,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
       if (blobUrlRef.current) { URL.revokeObjectURL(blobUrlRef.current); blobUrlRef.current = null; }
     };
-  }, [media, youtubeVideoId]);
+  }, [media, youtubeVideoId, hlsProxyRetryCount]);
 
   const handleLoadedMetadata = () => {
     if (!videoRef.current) return;
@@ -291,6 +317,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
     setErrorDetails(null);
     setIsLoadingMedia(true);
     setBypassStage('DIRECT');
+    setHlsProxyRetryCount(0);
     if (blobUrlRef.current) { URL.revokeObjectURL(blobUrlRef.current); blobUrlRef.current = null; }
     if (videoRef.current && media) {
       videoRef.current.src = media.sourceUrl;

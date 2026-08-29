@@ -54,36 +54,27 @@ async function extractDirectMediaStream(rawUrl: string): Promise<{ url: string; 
       return { url: MediaSnifferService.createYouTubeEmbedUrl(ytId), format: 'YOUTUBE' };
     }
 
-    // 1. Videy.co parser
-    const videyMatch = cleanUrl.match(/videy\.co\/v\/\?id=([a-zA-Z0-9_-]+)/i);
-    if (videyMatch && videyMatch[1]) {
-      return { url: `https://cdn.videy.co/${videyMatch[1]}.mp4`, format: 'MP4' };
+    // 1. Hoster berbagi video populer (Videy, Streamtape, DoodStream, Streamlare, ...)
+    const hoster = parseCommonHoster(cleanUrl);
+    if (hoster) {
+      return hoster;
     }
 
-    // 2. Format langsung (.m3u8, .mp4, .webm)
+    // 2. Format langsung (.m3u8, .mp4, .webm, .mpd)
     const urlWithoutQuery = cleanUrl.split('?')[0].toLowerCase();
     if (urlWithoutQuery.endsWith('.m3u8')) return { url: cleanUrl, format: 'HLS' };
     if (urlWithoutQuery.endsWith('.webm')) return { url: cleanUrl, format: 'WEBM' };
     if (urlWithoutQuery.endsWith('.mp4')) return { url: cleanUrl, format: 'MP4' };
+    if (urlWithoutQuery.endsWith('.mpd')) return { url: cleanUrl, format: 'DASH' };
 
-    // 3. Ekstraksi otomatis dari HTML halaman web
+    // 3. Ekstraksi otomatis dari HTML halaman web (handles JS-rendered data blobs juga)
     const res = await fetch(cleanUrl);
     if (res.ok) {
       const html = await res.text();
-
-      // Cari tag <video src="..."> atau <source src="...">
-      const vMatch = html.match(/<video[^>]*src=["']([^"']+)["']/i) || html.match(/<source[^>]*src=["']([^"']+)["']/i);
-      if (vMatch && vMatch[1]) {
-        const absolute = new URL(vMatch[1], cleanUrl).href;
-        const fmt: MediaFormatCategory = absolute.includes('.m3u8') ? 'HLS' : 'MP4';
-        return { url: absolute, format: fmt };
-      }
-
-      // Cari stream URL dalam script / page data
-      const urlMatch = html.match(/https?:\/\/[^"'\s<>]+\.(?:m3u8|mp4|webm)(?:\?[^"'\s<>]*)?/i);
-      if (urlMatch && urlMatch[0]) {
-        const absolute = urlMatch[0];
-        const fmt: MediaFormatCategory = absolute.includes('.m3u8') ? 'HLS' : 'MP4';
+      const extracted = extractMediaFromHtml(html, cleanUrl);
+      if (extracted) {
+        const absolute = new URL(extracted.url, cleanUrl).href;
+        const fmt: MediaFormatCategory = extracted.format;
         return { url: absolute, format: fmt };
       }
     }
@@ -92,6 +83,113 @@ async function extractDirectMediaStream(rawUrl: string): Promise<{ url: string; 
   } catch {
     return null;
   }
+}
+
+/**
+ * Parser untuk layanan hoster video populer berdasarkan pola URL/HTML yang dikenal.
+ */
+function parseCommonHoster(url: string): { url: string; format: MediaFormatCategory } | null {
+  const videyMatch = url.match(/videy\.co\/v\/\?id=([a-zA-Z0-9_-]+)/i);
+  if (videyMatch && videyMatch[1]) {
+    return { url: `https://cdn.videy.co/${videyMatch[1]}.mp4`, format: 'MP4' };
+  }
+
+  const streamtapeMatch = url.match(/streamtape\.com\/(?:v|e)\/(\w+)/i);
+  if (streamtapeMatch && streamtapeMatch[1]) {
+    return { url: `https://streamtape.com/api/get_link?id=${streamtapeMatch[1]}`, format: 'MP4' };
+  }
+
+  const doodstreamMatch = url.match(/dood\.[a-z]{2,3}\/(?:e|d)\/(\w+)/i);
+  if (doodstreamMatch && doodstreamMatch[1]) {
+    return { url: `https://dood.ws/e/${doodstreamMatch[1]}`, format: 'MP4' };
+  }
+
+  const streamlareMatch = url.match(/streamlare\.com\/(?:v|e)\/(\w+)/i);
+  if (streamlareMatch && streamlareMatch[1]) {
+    return { url: `https://streamlare.com/api/v1/file/convert?id=${streamlareMatch[1]}`, format: 'MP4' };
+  }
+
+  return null;
+}
+
+/**
+ * Mengurai berbagai pola media dari HTML, termasuk JSON ter-encode yang dirender oleh aplikasi JS
+ * (mis. __NEXT_DATA__, JSON-LD, window.__INITIAL_STATE__) serta tag <video>/<source> langsung.
+ */
+function extractMediaFromHtml(html: string, pageUrl: string): { url: string; format: MediaFormatCategory } | null {
+  // a. Tag <video src> / <source src>
+  const vMatch = html.match(/<video[^>]*src=["']([^"']+)["']/i) || html.match(/<source[^>]*src=["']([^"']+)["']/i);
+  if (vMatch && vMatch[1]) {
+    const absolute = new URL(vMatch[1], pageUrl).href;
+    return { url: absolute, format: formatFromUrl(absolute) };
+  }
+
+  // b. URL stream langsung yang terekspos di halaman (dengan atau tanpa escaping JSON \/)
+  const directStreamMatch = html.match(/(?:https?:)?\\?\/\\?\/[^"'\s<>\\]+\.(?:m3u8|mp4|webm|mpd)(?:\?[^"'\s<>\\]*)?/i);
+  if (directStreamMatch && directStreamMatch[0]) {
+    const raw = directStreamMatch[0].replace(/\\\//g, '/').replace(/\\"/g, '"');
+    const absolute = new URL(raw.startsWith('//') ? `https:${raw}` : raw, pageUrl).href;
+    return { url: absolute, format: formatFromUrl(absolute) };
+  }
+
+  // c. Embed iframe menuju hoster (yang akan diparsing lagi oleh parseCommonHoster)
+  const iframeMatch = html.match(/<iframe[^>]*src=["']([^"']+)["']/i);
+  if (iframeMatch && iframeMatch[1] && /(videy|streamtape|dood|streamlare)/i.test(iframeMatch[1])) {
+    const absolute = new URL(iframeMatch[1], pageUrl).href;
+    const hoster = parseCommonHoster(absolute);
+    if (hoster) return hoster;
+  }
+
+  // d. JSON-LD (Schema.org VideoObject) — contentUrl / embedUrl
+  const jsonLdMatch = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/i);
+  if (jsonLdMatch && jsonLdMatch[1]) {
+    try {
+      const ld = JSON.parse(jsonLdMatch[1]);
+      const candidates = collectVideoUrls(ld);
+      for (const c of candidates) {
+        if (c && /\.(m3u8|mp4|webm|mpd)/i.test(c)) {
+          const absolute = new URL(c, pageUrl).href;
+          return { url: absolute, format: formatFromUrl(absolute) };
+        }
+      }
+    } catch {
+      // Abaikan JSON-LD yang tidak valid
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Mengumpulkan seluruh field yang tampak sebagai URL video dari objek JSON bernested
+ */
+function collectVideoUrls(node: unknown, acc: string[] = []): string[] {
+  if (Array.isArray(node)) {
+    for (const item of node) collectVideoUrls(item, acc);
+  } else if (node && typeof node === 'object') {
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (typeof value === 'string') {
+        if (/\.(m3u8|mp4|webm|mpd)(\?|$)/i.test(value)) {
+          acc.push(value);
+        }
+      } else {
+        collectVideoUrls(value, acc);
+      }
+    }
+  }
+  return acc;
+}
+
+/**
+ * Menentukan kategori format dari URL
+ */
+function formatFromUrl(url: string): MediaFormatCategory {
+  const clean = url.toLowerCase().split('?')[0];
+  if (clean.endsWith('.m3u8')) return 'HLS';
+  if (clean.endsWith('.webm')) return 'WEBM';
+  if (clean.endsWith('.mpd')) return 'DASH';
+  if (clean.endsWith('.mp3') || clean.endsWith('.aac')) return 'AUDIO';
+  return 'MP4';
 }
 
 export default function LinkCheckerPage() {
