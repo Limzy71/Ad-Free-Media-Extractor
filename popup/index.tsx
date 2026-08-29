@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Header } from '~/components/popup/Header';
 import { MediaCard } from '~/components/popup/MediaCard';
 import { Toast, type ToastMessage } from '~/components/ui/Toast';
-import { ShieldCheck, Film, RefreshCw, Search } from 'lucide-react';
+import { ShieldCheck, Film, RefreshCw, Search, ExternalLink } from 'lucide-react';
 import { LinkVerifierService } from '~/services/link-verifier';
 import type { MediaMetadata, StreamDownloadProgress } from '~/types/media';
 import type { SecurityStatus } from '~/types/security';
@@ -63,7 +63,7 @@ export default function PopupIndex() {
             }
           );
         }
-      } catch (err) {
+      } catch {
         setIsLoading(false);
       }
     };
@@ -109,6 +109,11 @@ export default function PopupIndex() {
         message: `Proteksi untuk ${currentDomain} telah aktif kembali.`
       });
     }
+  };
+
+  const handleOpenLinkChecker = () => {
+    const url = chrome.runtime.getURL('tabs/link-checker.html');
+    chrome.tabs.create({ url });
   };
 
   const handlePlayClean = (media: MediaMetadata) => {
@@ -170,6 +175,7 @@ export default function PopupIndex() {
         blockedAdsCount={blockedAdsCount}
         isEnabled={isEnabled}
         onToggleEnabled={handleToggleProtection}
+        onOpenLinkChecker={handleOpenLinkChecker}
       />
 
       {/* Body: Media List */}
@@ -222,18 +228,29 @@ export default function PopupIndex() {
           </div>
         ) : (
           /* Empty State */
-          <div className="flex flex-col items-center justify-center py-10 px-4 text-center border-2 border-dashed border-zinc-200 dark:border-zinc-800 rounded-2xl">
-            <div className="w-10 h-10 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-zinc-400 mb-2">
+          <div className="flex flex-col items-center justify-center py-6 px-4 text-center border-2 border-dashed border-zinc-200 dark:border-zinc-800 rounded-2xl space-y-3">
+            <div className="w-10 h-10 rounded-full bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-zinc-400">
               <Film className="w-5 h-5" />
             </div>
-            <h4 className="text-xs font-bold text-zinc-800 dark:text-zinc-200">
-              {searchQuery ? 'Video Tidak Ditemukan' : 'Belum Ada Video Terdeteksi'}
-            </h4>
-            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1 leading-relaxed">
-              {searchQuery
-                ? 'Tidak ada video yang cocok dengan kata kunci pencarian Anda.'
-                : 'Jelajahi halaman web atau mulai putar video untuk mendeteksi stream media secara otomatis.'}
-            </p>
+            <div>
+              <h4 className="text-xs font-bold text-zinc-800 dark:text-zinc-200">
+                {searchQuery ? 'Video Tidak Ditemukan' : 'Belum Ada Video Terdeteksi'}
+              </h4>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1 leading-relaxed">
+                {searchQuery
+                  ? 'Tidak ada video yang cocok dengan kata kunci pencarian Anda.'
+                  : 'Putar video di halaman web ini, atau gunakan Link Checker untuk cek link video secara manual.'}
+              </p>
+            </div>
+
+            {/* Quick Action Button to Open Web Link Checker */}
+            <button
+              onClick={handleOpenLinkChecker}
+              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-blue-900/20 transition-all hover:scale-105"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>Buka Web Link Checker</span>
+            </button>
           </div>
         )}
       </main>

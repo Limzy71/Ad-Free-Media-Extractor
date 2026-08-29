@@ -5,7 +5,7 @@ import {
   Zap, Globe, Clock, BarChart2, ChevronRight
 } from 'lucide-react';
 import { LinkVerifierService } from '~/services/link-verifier';
-import type { SecurityVerificationResult } from '~/types/security';
+import type { SecurityVerificationResult, SecurityStatus } from '~/types/security';
 import type { ExtensionMessage } from '~/types/messages';
 import '~/style.css';
 
@@ -75,10 +75,11 @@ export default function LinkCheckerPage() {
     chrome.runtime.sendMessage(msg).catch(() => {});
   };
 
-  const statusConfig = {
+  const statusConfig: Record<SecurityStatus, { color: string; bg: string; label: string; icon: JSX.Element }> = {
     SAFE: { color: 'text-emerald-400', bg: 'bg-emerald-950/50 border-emerald-700/40', label: 'Tautan Aman', icon: <ShieldCheck className="w-8 h-8 text-emerald-400" /> },
+    WARNING: { color: 'text-amber-400', bg: 'bg-amber-950/50 border-amber-700/40', label: 'Peringatan Tautan Mencurigakan', icon: <ShieldAlert className="w-8 h-8 text-amber-400" /> },
     BLOCKED: { color: 'text-red-400', bg: 'bg-red-950/50 border-red-700/40', label: 'Ancaman Terdeteksi!', icon: <ShieldAlert className="w-8 h-8 text-red-400" /> },
-    UNVERIFIED: { color: 'text-amber-400', bg: 'bg-amber-950/50 border-amber-700/40', label: 'Tidak Dapat Diverifikasi', icon: <ShieldOff className="w-8 h-8 text-amber-400" /> },
+    UNVERIFIED: { color: 'text-zinc-400', bg: 'bg-zinc-900/50 border-zinc-700/40', label: 'Tidak Dapat Diverifikasi', icon: <ShieldOff className="w-8 h-8 text-zinc-400" /> },
   };
   const cfg = result?.security ? (statusConfig[result.security.status] ?? statusConfig.UNVERIFIED) : null;
 
@@ -218,7 +219,7 @@ export default function LinkCheckerPage() {
             )}
 
             <button onClick={() => { setResult(null); setInputUrl(''); inputRef.current?.focus(); }} className="w-full py-2.5 text-xs font-semibold text-zinc-400 hover:text-zinc-200 transition-colors">
-              ← Cek URL Lain
+              Ã¢â€ Â Cek URL Lain
             </button>
           </div>
         )}
@@ -241,7 +242,7 @@ export default function LinkCheckerPage() {
       </main>
 
       <footer className="max-w-3xl mx-auto px-6 pb-8 text-center text-[10px] text-zinc-600">
-        Universal Ad-Free Media Extractor v1.0.0 · Zero Data Retention · Manifest V3
+        Universal Ad-Free Media Extractor v1.0.0 Ã‚Â· Zero Data Retention Ã‚Â· Manifest V3
       </footer>
     </div>
   );
