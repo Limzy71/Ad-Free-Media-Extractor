@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import Hls from 'hls.js';
-import { X, Film, AlertTriangle, RefreshCw, Loader2, ShieldAlert, WifiOff, FileQuestion, Ban, ExternalLink } from 'lucide-react';
+import { X, Film, AlertTriangle, RefreshCw, Loader2, FileQuestion, Ban, WifiOff, ExternalLink } from 'lucide-react';
 import { PlayerControls } from './PlayerControls';
 import type { MediaMetadata } from '~/types/media';
 
@@ -15,6 +15,11 @@ interface ErrorDetails {
   message: string;
   statusCode?: number | string;
   type: 'EXPIRED' | 'FORBIDDEN' | 'NETWORK' | 'FORMAT' | 'UNKNOWN';
+}
+
+function extractYouTubeId(url: string): string | null {
+  const match = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+  return match ? match[1] : null;
 }
 
 export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
@@ -42,14 +47,20 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
   const [isVertical, setIsVertical] = useState<boolean>(false);
   const [isBypassingCORS, setIsBypassingCORS] = useState<boolean>(false);
 
+  const youtubeVideoId = media ? (extractYouTubeId(media.sourceUrl) || extractYouTubeId(media.pageUrl)) : null;
+
   // Check Picture-in-Picture Support
   useEffect(() => {
     setIsPipAvailable(document.pictureInPictureEnabled || false);
   }, []);
 
-  // Initialize Video & HLS.js
+  // Initialize Video & HLS.js (Skip if YouTube embed)
   useEffect(() => {
-    if (!media || !videoRef.current) return;
+    if (!media || youtubeVideoId) {
+      setIsLoadingMedia(false);
+      return;
+    }
+    if (!videoRef.current) return;
 
     const video = videoRef.current;
     setErrorDetails(null);
@@ -160,7 +171,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
         blobUrlRef.current = null;
       }
     };
-  }, [media]);
+  }, [media, youtubeVideoId]);
 
   // Detect Aspect Ratio after Video Metadata Loaded
   const handleLoadedMetadata = () => {
@@ -182,7 +193,6 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
   const handleVideoError = async () => {
     if (!media || !videoRef.current) return;
 
-    // Jika belum pernah mencoba bypass CORS, coba fetch via ekstensi sebagai Blob
     if (!isBypassingCORS && !media.sourceUrl.startsWith('blob:')) {
       setIsBypassingCORS(true);
       setIsLoadingMedia(true);
@@ -247,7 +257,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
 
   // Keyboard Shortcuts (Hotkeys)
   useEffect(() => {
-    if (!media) return;
+    if (!media || youtubeVideoId) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement).tagName)) {
@@ -311,7 +321,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [media, isPlaying, isMuted, volume, currentTime, duration]);
+  }, [media, isPlaying, isMuted, volume, currentTime, duration, youtubeVideoId]);
 
   if (!media) return null;
 
@@ -425,23 +435,34 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
           </button>
         </div>
 
-        {/* Video Element */}
-        <video
-          ref={videoRef}
-          onClick={togglePlay}
-          onDoubleClick={toggleFullscreen}
-          onTimeUpdate={() => videoRef.current && setCurrentTime(videoRef.current.currentTime)}
-          onLoadedMetadata={handleLoadedMetadata}
-          onError={handleVideoError}
-          onWaiting={() => setIsLoadingMedia(true)}
-          onPlaying={() => setIsLoadingMedia(false)}
-          onEnded={() => setIsPlaying(false)}
-          className="w-full h-full object-contain cursor-pointer"
-          playsInline
-        />
+        {/* YouTube Clean No-Cookie Embed Player */}
+        {youtubeVideoId ? (
+          <iframe
+            src={`https://www.youtube-nocookie.com/embed/${youtubeVideoId}?autoplay=1&modestbranding=1&rel=0`}
+            title={media.pageTitle || 'YouTube Video'}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowFullScreen
+            className="w-full h-full border-0"
+          />
+        ) : (
+          /* Native HTML5 / HLS Video Element */
+          <video
+            ref={videoRef}
+            onClick={togglePlay}
+            onDoubleClick={toggleFullscreen}
+            onTimeUpdate={() => videoRef.current && setCurrentTime(videoRef.current.currentTime)}
+            onLoadedMetadata={handleLoadedMetadata}
+            onError={handleVideoError}
+            onWaiting={() => setIsLoadingMedia(true)}
+            onPlaying={() => setIsLoadingMedia(false)}
+            onEnded={() => setIsPlaying(false)}
+            className="w-full h-full object-contain cursor-pointer"
+            playsInline
+          />
+        )}
 
         {/* Loading Spinner */}
-        {isLoadingMedia && !errorDetails && (
+        {!youtubeVideoId && isLoadingMedia && !errorDetails && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 bg-black/60 z-25 pointer-events-none">
             <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
             <span className="text-xs font-semibold text-zinc-300">
@@ -451,7 +472,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
         )}
 
         {/* Spesifik Error Notification Banner with Action */}
-        {errorDetails && (
+        {!youtubeVideoId && errorDetails && (
           <div className="absolute inset-0 flex items-center justify-center p-6 bg-black/90 z-30">
             <div className="p-6 rounded-3xl bg-zinc-900/95 border border-zinc-700 text-white flex flex-col items-center text-center gap-3.5 max-w-md shadow-2xl backdrop-blur-xl animate-in zoom-in-95 duration-150">
               <div className="w-16 h-16 rounded-2xl bg-zinc-800 flex items-center justify-center">
@@ -503,28 +524,30 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
           </div>
         )}
 
-        {/* Bottom Custom Controls Bar */}
-        <PlayerControls
-          isPlaying={isPlaying}
-          isMuted={isMuted}
-          isFullscreen={isFullscreen}
-          isPipAvailable={isPipAvailable}
-          currentTime={currentTime}
-          duration={duration}
-          volume={volume}
-          playbackRate={playbackRate}
-          levels={hlsLevels}
-          currentLevel={currentHlsLevel}
-          onTogglePlay={togglePlay}
-          onToggleMute={toggleMute}
-          onToggleFullscreen={toggleFullscreen}
-          onTogglePip={togglePip}
-          onSeek={seek}
-          onVolumeChange={handleVolumeChange}
-          onPlaybackRateChange={handlePlaybackRateChange}
-          onLevelChange={handleLevelChange}
-          onDownload={() => onDownload(media)}
-        />
+        {/* Bottom Custom Controls Bar (Only for non-YouTube video) */}
+        {!youtubeVideoId && (
+          <PlayerControls
+            isPlaying={isPlaying}
+            isMuted={isMuted}
+            isFullscreen={isFullscreen}
+            isPipAvailable={isPipAvailable}
+            currentTime={currentTime}
+            duration={duration}
+            volume={volume}
+            playbackRate={playbackRate}
+            levels={hlsLevels}
+            currentLevel={currentHlsLevel}
+            onTogglePlay={togglePlay}
+            onToggleMute={toggleMute}
+            onToggleFullscreen={toggleFullscreen}
+            onTogglePip={togglePip}
+            onSeek={seek}
+            onVolumeChange={handleVolumeChange}
+            onPlaybackRateChange={handlePlaybackRateChange}
+            onLevelChange={handleLevelChange}
+            onDownload={() => onDownload(media)}
+          />
+        )}
       </div>
     </div>
   );
