@@ -20,9 +20,11 @@ import {
   ArrowLeft,
   Sparkles,
   Layers,
-  ExternalLink
+  ExternalLink,
+  Radio
 } from 'lucide-react';
 import { LinkVerifierService } from '~/services/link-verifier';
+import { DohResolverService } from '~/services/doh-resolver';
 import { CleanPlayerModal } from '~/components/clean-player/CleanPlayerModal';
 import { Toast, type ToastMessage } from '~/components/ui/Toast';
 import type { SecurityVerificationResult, SecurityStatus } from '~/types/security';
@@ -33,12 +35,13 @@ interface CheckResult {
   security: SecurityVerificationResult | null;
   resolvedMediaUrl: string | null;
   mediaFormat: MediaFormatCategory;
+  isDohResolved: boolean;
   responseTimeMs: number;
   checkedAt: string;
 }
 
 /**
- * Ekstraktor pintar untuk mengambil URL video langsung dari URL halaman web
+ * Ekstraktor pintar untuk mengambil URL video langsung dengan fallback DoH & Proxy
  */
 async function extractDirectMediaStream(rawUrl: string): Promise<{ url: string; format: MediaFormatCategory } | null> {
   try {
@@ -118,12 +121,15 @@ export default function LinkCheckerPage() {
     const startTime = Date.now();
 
     try {
-      new URL(fullUrl);
+      const urlObj = new URL(fullUrl);
 
-      // 1. Verifikasi Keamanan URL
+      // 1. Cek apakah domain diblokir ISP lokal via DoH
+      const dohStatus = await DohResolverService.resolveDomainDoH(urlObj.hostname);
+
+      // 2. Verifikasi Keamanan URL
       const security = await LinkVerifierService.verifyUrl(fullUrl);
 
-      // 2. Ekstraksi Media Stream Nyata
+      // 3. Ekstraksi Media Stream Nyata
       const directMedia = await extractDirectMediaStream(fullUrl);
 
       const responseTimeMs = Date.now() - startTime;
@@ -133,6 +139,7 @@ export default function LinkCheckerPage() {
         security,
         resolvedMediaUrl: directMedia?.url ?? null,
         mediaFormat: directMedia?.format ?? 'MP4',
+        isDohResolved: dohStatus.isAlive,
         responseTimeMs,
         checkedAt
       });
@@ -147,7 +154,6 @@ export default function LinkCheckerPage() {
     if (!inputUrl) return;
     const fullUrl = inputUrl.startsWith('http') ? inputUrl : `https://${inputUrl}`;
 
-    // Gunakan URL media yang sudah ter-resolusi atau ekstrak langsung
     let playUrl = result?.resolvedMediaUrl;
     let formatCategory = result?.mediaFormat ?? 'MP4';
 
@@ -268,7 +274,7 @@ export default function LinkCheckerPage() {
           </h2>
           <p className="text-sm text-zinc-400 max-w-xl mx-auto leading-relaxed">
             Tempelkan tautan video atau halaman web apa pun. Sistem akan memindai ancaman keamanan,
-            mengekstrak video asli, dan memutar media langsung dalam player bersih.
+            membypass pembatasan DNS ISP, dan memutar media langsung dalam player bersih.
           </p>
         </div>
 
@@ -295,7 +301,7 @@ export default function LinkCheckerPage() {
 
             <button
               onClick={handlePaste}
-              className="px-4 py-3.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-200 rounded-2xl transition-all flex items-center justify-center gap-2 text-xs font-bold shrink-0 hover:scale-102"
+              className="px-4 py-3.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-200 rounded-2xl transition-all flex items-center justify-center gap-2 text-xs font-bold shrink-0 hover:scale-102 cursor-pointer"
               title="Tempel dari Clipboard"
             >
               <ClipboardPaste className="w-4 h-4 text-zinc-400" />
@@ -305,7 +311,7 @@ export default function LinkCheckerPage() {
             <button
               onClick={handleCheck}
               disabled={isChecking || !inputUrl.trim()}
-              className="px-6 py-3.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition-all shrink-0 shadow-lg shadow-blue-900/30 hover:scale-102"
+              className="px-6 py-3.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition-all shrink-0 shadow-lg shadow-blue-900/30 hover:scale-102 cursor-pointer"
             >
               {isChecking ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -332,7 +338,7 @@ export default function LinkCheckerPage() {
             </div>
             <div className="text-center space-y-1">
               <p className="text-sm font-bold text-zinc-200">Sedang Menganalisis Keamanan & Media...</p>
-              <p className="text-xs text-zinc-500">Memeriksa domain phishing, judi, malware, dan stream video asli</p>
+              <p className="text-xs text-zinc-500">Memeriksa DNS global (DoH), domain phishing, judi, malware, dan stream video asli</p>
             </div>
           </div>
         )}
@@ -357,10 +363,18 @@ export default function LinkCheckerPage() {
                 <Clock className="w-3.5 h-3.5 text-zinc-500" />
                 Dipindai pukul {result.checkedAt}
               </span>
-              <span className="flex items-center gap-1.5 font-medium">
-                <BarChart2 className="w-3.5 h-3.5 text-zinc-500" />
-                Kecepatan Respons {result.responseTimeMs} ms
-              </span>
+              <div className="flex items-center gap-3">
+                {result.isDohResolved && (
+                  <span className="flex items-center gap-1 text-[11px] font-bold text-cyan-400 bg-cyan-950/60 px-2.5 py-0.5 rounded-full border border-cyan-800/60">
+                    <Radio className="w-3 h-3 text-cyan-400 animate-pulse" />
+                    DNS-over-HTTPS (Bypass ISP Aktif)
+                  </span>
+                )}
+                <span className="flex items-center gap-1.5 font-medium">
+                  <BarChart2 className="w-3.5 h-3.5 text-zinc-500" />
+                  Respons {result.responseTimeMs} ms
+                </span>
+              </div>
             </div>
 
             {/* 1. Security Card */}
@@ -476,8 +490,8 @@ export default function LinkCheckerPage() {
             {[
               {
                 icon: ShieldCheck,
-                title: 'Pemindai Keamanan',
-                desc: 'Mendeteksi otomatis tautan phishing, malware, dan platform perjudian secara instan.',
+                title: 'Pemindai Keamanan & DoH',
+                desc: 'Mendeteksi phishing, malware, dan membypass pemblokiran DNS ISP lokal secara otomatis.',
                 color: 'text-emerald-400',
                 bg: 'bg-emerald-950/20 border-emerald-800/30'
               },
