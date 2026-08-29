@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import Hls from 'hls.js';
-import { X, Film, AlertTriangle, RefreshCw, Loader2, ShieldAlert, WifiOff, FileQuestion, Ban } from 'lucide-react';
+import { X, Film, AlertTriangle, RefreshCw, Loader2, ShieldAlert, WifiOff, FileQuestion, Ban, ExternalLink } from 'lucide-react';
 import { PlayerControls } from './PlayerControls';
 import type { MediaMetadata } from '~/types/media';
 
@@ -25,6 +25,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const blobUrlRef = useRef<string | null>(null);
 
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [isMuted, setIsMuted] = useState<boolean>(false);
@@ -39,6 +40,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
   const [errorDetails, setErrorDetails] = useState<ErrorDetails | null>(null);
   const [isLoadingMedia, setIsLoadingMedia] = useState<boolean>(true);
   const [isVertical, setIsVertical] = useState<boolean>(false);
+  const [isBypassingCORS, setIsBypassingCORS] = useState<boolean>(false);
 
   // Check Picture-in-Picture Support
   useEffect(() => {
@@ -52,6 +54,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
     const video = videoRef.current;
     setErrorDetails(null);
     setIsLoadingMedia(true);
+    setIsBypassingCORS(false);
     setHlsLevels([]);
     setCurrentHlsLevel(-1);
 
@@ -111,7 +114,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
                 type: 'FORBIDDEN',
                 statusCode: httpStatus,
                 title: 'Akses Dibatasi oleh Server (403 Forbidden)',
-                message: 'Server penyedia video memblokir izin pemutaran langsung (CORS / token autentikasi sesi kadaluwarsa).'
+                message: 'Server penyedia video memblokir izin pemutaran langsung (CORS / token sesi kadaluwarsa).'
               });
             } else if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
               setErrorDetails({
@@ -152,6 +155,10 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
     };
   }, [media]);
 
@@ -161,6 +168,8 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
     const { videoWidth, videoHeight, duration: vidDuration } = videoRef.current;
     setDuration(vidDuration || 0);
     setIsLoadingMedia(false);
+    setIsBypassingCORS(false);
+    setErrorDetails(null);
 
     if (videoHeight > videoWidth) {
       setIsVertical(true);
@@ -169,14 +178,37 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
     }
   };
 
-  // Mendiagnosis error spesifik pada file MP4/WebM langsung
+  // Mendiagnosis error dan mencoba auto-bypass CORS via extension Blob
   const handleVideoError = async () => {
-    setIsLoadingMedia(false);
+    if (!media || !videoRef.current) return;
 
-    if (!media) return;
+    // Jika belum pernah mencoba bypass CORS, coba fetch via ekstensi sebagai Blob
+    if (!isBypassingCORS && !media.sourceUrl.startsWith('blob:')) {
+      setIsBypassingCORS(true);
+      setIsLoadingMedia(true);
+
+      try {
+        const response = await fetch(media.sourceUrl);
+        if (response.ok) {
+          const blob = await response.blob();
+          if (blob && blob.size > 1000) {
+            const blobUrl = URL.createObjectURL(blob);
+            blobUrlRef.current = blobUrl;
+            videoRef.current.src = blobUrl;
+            videoRef.current.load();
+            videoRef.current.play().catch(() => {});
+            return;
+          }
+        }
+      } catch {
+        // Bypass gagal, lanjutkan ke diagnosis error
+      }
+    }
+
+    setIsLoadingMedia(false);
+    setIsBypassingCORS(false);
 
     try {
-      // Lakukan pengecekan status HTTP langsung ke URL sumber
       const res = await fetch(media.sourceUrl, { method: 'HEAD' });
 
       if (res.status === 404 || res.status === 410) {
@@ -194,44 +226,22 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
           type: 'FORBIDDEN',
           statusCode: res.status,
           title: 'Akses Dibatasi oleh Server (403 Forbidden)',
-          message: 'Server sumber menolak akses pemutaran (Hotlink Protection / proteksi referer ketat).'
+          message: 'Server sumber menolak akses streaming langsung dari luar domainnya (Hotlink Protection).'
         });
         return;
       }
+    } catch {}
 
-      if (res.status >= 500) {
-        setErrorDetails({
-          type: 'NETWORK',
-          statusCode: res.status,
-          title: `Server Sumber Mengalami Gangguan (${res.status})`,
-          message: 'Server penyedia video sedang bermasalah atau tidak merespons permintaan pemutaran.'
-        });
-        return;
-      }
-    } catch {
-      // Fetch gagal (mungkin CORS atau offline)
-    }
+    setErrorDetails({
+      type: 'FORBIDDEN',
+      title: 'Akses Dibatasi atau Tautan Kadaluwarsa',
+      message: 'Server video menerapkan proteksi hotlink yang mencegah pemutaran langsung. Anda dapat membuka halaman web aslinya dengan perlindungan ad-blocker ekstensi.'
+    });
+  };
 
-    // Default error berdasarkan kode video element
-    const errCode = videoRef.current?.error?.code;
-    if (errCode === 2) {
-      setErrorDetails({
-        type: 'NETWORK',
-        title: 'Koneksi Jaringan Terputus',
-        message: 'Gagal mengunduh berkas video karena kendala jaringan internet.'
-      });
-    } else if (errCode === 3 || errCode === 4) {
-      setErrorDetails({
-        type: 'FORBIDDEN',
-        title: 'Akses Dibatasi atau Tautan Kadaluwarsa',
-        message: 'Server sumber menolak akses streaming atau berkas video tidak lagi tersedia di alamat tersebut.'
-      });
-    } else {
-      setErrorDetails({
-        type: 'UNKNOWN',
-        title: 'Gagal Memuat Video',
-        message: 'Terjadi kendala saat memuat berkas video dari server sumber.'
-      });
+  const handleOpenSourcePage = () => {
+    if (media?.pageUrl) {
+      chrome.tabs.create({ url: media.pageUrl });
     }
   };
 
@@ -370,6 +380,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
   const handleRetry = () => {
     setErrorDetails(null);
     setIsLoadingMedia(true);
+    setIsBypassingCORS(false);
     if (videoRef.current) {
       videoRef.current.load();
     }
@@ -431,13 +442,15 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
 
         {/* Loading Spinner */}
         {isLoadingMedia && !errorDetails && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 z-25 pointer-events-none">
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 bg-black/60 z-25 pointer-events-none">
             <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-            <span className="text-xs font-semibold text-zinc-300">Memuat Video...</span>
+            <span className="text-xs font-semibold text-zinc-300">
+              {isBypassingCORS ? 'Mengambil stream video (Bypass CORS)...' : 'Memuat Video...'}
+            </span>
           </div>
         )}
 
-        {/* Spesifik Error Notification Banner with Retry */}
+        {/* Spesifik Error Notification Banner with Action */}
         {errorDetails && (
           <div className="absolute inset-0 flex items-center justify-center p-6 bg-black/90 z-30">
             <div className="p-6 rounded-3xl bg-zinc-900/95 border border-zinc-700 text-white flex flex-col items-center text-center gap-3.5 max-w-md shadow-2xl backdrop-blur-xl animate-in zoom-in-95 duration-150">
@@ -459,19 +472,31 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
                 </p>
               </div>
 
-              <div className="flex items-center gap-2.5 pt-1 w-full">
-                <button
-                  onClick={handleRetry}
-                  className="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-lg shadow-blue-900/30 cursor-pointer"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Coba Lagi</span>
-                </button>
+              <div className="flex flex-col gap-2 pt-1 w-full">
+                <div className="flex items-center gap-2 w-full">
+                  <button
+                    onClick={handleRetry}
+                    className="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-lg shadow-blue-900/30 cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Coba Lagi</span>
+                  </button>
+
+                  <button
+                    onClick={handleOpenSourcePage}
+                    className="flex-1 py-2.5 px-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 border border-zinc-700 transition-all cursor-pointer"
+                    title="Buka situs sumber dengan pemblokir iklan ekstensi aktif"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5 text-zinc-400" />
+                    <span>Buka Situs Host</span>
+                  </button>
+                </div>
+
                 <button
                   onClick={onClose}
-                  className="py-2.5 px-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                  className="w-full py-2 text-xs font-semibold text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
                 >
-                  Tutup
+                  Tutup Pemutar
                 </button>
               </div>
             </div>
