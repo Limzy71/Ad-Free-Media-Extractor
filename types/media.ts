@@ -9,9 +9,10 @@ export type MediaMimeType =
   | 'application/dash+xml'
   | 'audio/mpeg'
   | 'audio/mp4'
+  | 'video/youtube-embed'
   | 'unknown';
 
-export type MediaFormatCategory = 'MP4' | 'WEBM' | 'HLS' | 'DASH' | 'AUDIO';
+export type MediaFormatCategory = 'MP4' | 'WEBM' | 'HLS' | 'DASH' | 'AUDIO' | 'YOUTUBE';
 
 export interface MediaMetadata {
   id: string;

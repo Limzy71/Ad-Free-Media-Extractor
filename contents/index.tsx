@@ -6,6 +6,7 @@ import { CleanPlayerModal } from '~/components/clean-player/CleanPlayerModal';
 import { Toast, type ToastMessage } from '~/components/ui/Toast';
 import { Badge } from '~/components/ui/Badge';
 import { AdBlockerService } from '~/services/ad-blocker';
+import { MediaSnifferService } from '~/services/media-sniffer';
 import type { MediaMetadata } from '~/types/media';
 import type { ExtensionMessage } from '~/types/messages';
 
@@ -93,15 +94,67 @@ export default function ContentOverlay() {
       }
     };
 
+    // 3. Deteksi aktif untuk YouTube Video (termasuk SPA navigation di YouTube)
+    const checkYouTubePage = () => {
+      const currentUrl = window.location.href;
+      const ytId = MediaSnifferService.extractYouTubeVideoId(currentUrl);
+      if (ytId) {
+        let title = document.title ? MediaSnifferService.sanitizeTitle(document.title) : 'YouTube Video';
+        const ytTitleEl = document.querySelector('h1.ytd-watch-metadata, h1.title, #title h1');
+        if (ytTitleEl && ytTitleEl.textContent?.trim()) {
+          title = MediaSnifferService.sanitizeTitle(ytTitleEl.textContent.trim());
+        }
+
+        const ytItem: MediaMetadata = {
+          id: `yt_${ytId}`,
+          sourceUrl: MediaSnifferService.createYouTubeEmbedUrl(ytId),
+          pageUrl: currentUrl,
+          pageTitle: title || 'YouTube Video',
+          mimeType: 'video/youtube-embed',
+          formatCategory: 'YOUTUBE',
+          resolution: 'HD (Embed)',
+          detectedAtTimestamp: Date.now(),
+          isDrmProtected: false
+        };
+
+        setDetectedMediaList((prev) => {
+          if (prev.some((m) => m.id === ytItem.id)) return prev;
+          return [ytItem, ...prev.filter((m) => m.formatCategory !== 'YOUTUBE')];
+        });
+      }
+    };
+
+    checkYouTubePage();
+    window.addEventListener('yt-navigate-finish', checkYouTubePage);
+    window.addEventListener('popstate', checkYouTubePage);
+    let ytInterval: number | undefined;
+    if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be')) {
+      ytInterval = window.setInterval(checkYouTubePage, 1500);
+    }
+
     chrome.runtime.onMessage.addListener(messageListener);
 
     return () => {
       cleanupSanitizer();
       chrome.runtime.onMessage.removeListener(messageListener);
+      window.removeEventListener('yt-navigate-finish', checkYouTubePage);
+      window.removeEventListener('popstate', checkYouTubePage);
+      if (ytInterval) clearInterval(ytInterval);
     };
   }, []);
 
   const handleDownload = (media: MediaMetadata) => {
+    if (media.formatCategory === 'YOUTUBE') {
+      setToast({
+        id: Date.now().toString(),
+        type: 'info',
+        title: 'YouTube Clean Embed Mode',
+        message: 'Pengunduhan langsung YouTube dinonaktifkan sesuai kebijakan Chrome Web Store. Anda dapat menonton bebas iklan di Clean Player.',
+        durationMs: 4500
+      });
+      return;
+    }
+
     const EXT_MAP: Record<string, string> = {
       MP4: 'mp4',
       WEBM: 'webm',

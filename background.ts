@@ -129,11 +129,42 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   tabBlockedAdsMap.delete(tabId);
 });
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'loading') {
     tabMediaMap.delete(tabId);
     tabBlockedAdsMap.delete(tabId);
     updateExtensionBadge(tabId, 0);
+  }
+
+  const targetUrl = tab.url || changeInfo.url;
+  if (targetUrl) {
+    const ytId = MediaSnifferService.extractYouTubeVideoId(targetUrl);
+    if (ytId) {
+      const mediaItem: MediaMetadata = {
+        id: `yt_${ytId}`,
+        sourceUrl: MediaSnifferService.createYouTubeEmbedUrl(ytId),
+        pageUrl: targetUrl,
+        pageTitle: MediaSnifferService.sanitizeTitle(tab.title || 'YouTube Video'),
+        mimeType: 'video/youtube-embed',
+        formatCategory: 'YOUTUBE',
+        resolution: 'HD (Embed)',
+        detectedAtTimestamp: Date.now(),
+        isDrmProtected: false
+      };
+
+      const currentList = tabMediaMap.get(tabId) || [];
+      if (!currentList.some((m) => m.id === mediaItem.id)) {
+        const updatedList = [mediaItem];
+        tabMediaMap.set(tabId, updatedList);
+        updateExtensionBadge(tabId, updatedList.length);
+
+        const msg: ExtensionMessage = {
+          type: 'MEDIA_DETECTED',
+          payload: mediaItem
+        };
+        chrome.tabs.sendMessage(tabId, msg).catch(() => {});
+      }
+    }
   }
 });
 

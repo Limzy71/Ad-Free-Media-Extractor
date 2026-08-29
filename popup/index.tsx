@@ -129,6 +129,17 @@ export default function PopupIndex() {
   };
 
   const handleDownload = (media: MediaMetadata) => {
+    if (media.formatCategory === 'YOUTUBE') {
+      setToast({
+        id: Date.now().toString(),
+        type: 'info',
+        title: 'YouTube Clean Embed Mode',
+        message: 'Pengunduhan langsung YouTube dinonaktifkan sesuai kebijakan Chrome Web Store. Anda dapat menonton bebas iklan di Clean Player.',
+        durationMs: 4500
+      });
+      return;
+    }
+
     const EXT_MAP: Record<string, string> = {
       MP4: 'mp4',
       WEBM: 'webm',

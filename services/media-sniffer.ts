@@ -41,6 +41,15 @@ export class MediaSnifferService {
       return 'AUDIO';
     }
 
+    if (
+      lowerMime.includes('video/youtube-embed') ||
+      cleanUrl.includes('youtube.com') ||
+      cleanUrl.includes('youtu.be') ||
+      cleanUrl.includes('youtube-nocookie.com')
+    ) {
+      return 'YOUTUBE';
+    }
+
     return 'MP4';
   }
 
@@ -177,5 +186,24 @@ export class MediaSnifferService {
         sourceUrl.includes('widevine') ||
         sourceUrl.includes('fairplay')
     };
+  }
+
+  /**
+   * Ekstraksi Video ID dari URL YouTube (watch, shorts, embed, youtu.be)
+   */
+  public static extractYouTubeVideoId(url: string): string | null {
+    try {
+      const match = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|v\/|watch\?.+&v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+      return match ? match[1] : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Menghasilkan URL embed resmi tanpa pelacak (youtube-nocookie.com)
+   */
+  public static createYouTubeEmbedUrl(videoId: string): string {
+    return `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&modestbranding=1&rel=0&enablejsapi=1`;
   }
 }

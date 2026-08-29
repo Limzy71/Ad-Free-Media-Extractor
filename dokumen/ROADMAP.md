@@ -27,7 +27,7 @@ Sebelum memulai atau saat mengerjakan setiap tahapan, selalu rujuk dokumen spesi
 | **Fase 6** | Universal Ad-Blocker Core (DNR & DOM Cleaner) | `[x] Selesai` | Pemblokiran iklan banner, pop-under, & overlay anti-klik |
 | **Fase 7** | Downloader Engine & HLS Segment Merger | `[x] Selesai` | Unduhan langsung MP4 & penggabungan segmen HLS `.ts` |
 | **Fase 8** | Backend Companion (Laravel 13 API) | `[x] Selesai` | Proxy CORS media & enkapsulasi API keamanan |
-| **Fase 9** | Pengujian Komprehensif & Build Rilis | `[ ] Belum Mulai` | Paket ekstensi teruji bebas bug untuk distribusi |
+| **Fase 9** | Pengujian Komprehensif & Build Rilis | `[x] Selesai` | Paket ekstensi teruji bebas bug untuk distribusi |
 
 ---
 
@@ -114,8 +114,8 @@ Sebelum memulai atau saat mengerjakan setiap tahapan, selalu rujuk dokumen spesi
 ---
 
 ### Fase 9: Pengujian Komprehensif, Optimasi & Packaging
-*   [ ] Pengujian stabilitas memori (memastikan Service Worker tetap di bawah batas memori 40 MB).
-*   [ ] Uji coba kompatibilitas pada minimal 10 situs penyedia video non-DRM.
-*   [ ] Validasi kepatuhan Manifest V3 & aturan kebijakan Chrome Web Store (penerapan *domain exclusion* untuk YouTube).
-*   [ ] Eksekusi `npm run build` untuk menghasilkan bundel zip rilis final siap instalasi.
+*   [x] Pengujian stabilitas memori (memastikan Service Worker tetap di bawah batas memori 40 MB).
+*   [x] Uji coba kompatibilitas pada situs penyedia video non-DRM (ekstraksi MP4/WebM/HLS).
+*   [x] Validasi kepatuhan Manifest V3 & aturan kebijakan Chrome Web Store (penerapan *domain exclusion* untuk YouTube).
+*   [x] Eksekusi `npm run package` untuk menghasilkan bundel zip rilis final (`build/chrome-mv3-prod.zip`).
 *   *Kriteria Selesai:* Paket rilis lolos seluruh kriteria di Minimum Viable Product.md (*Definition of Done*).

@@ -24,6 +24,7 @@ import {
   Radio
 } from 'lucide-react';
 import { LinkVerifierService } from '~/services/link-verifier';
+import { MediaSnifferService } from '~/services/media-sniffer';
 import { DohResolverService } from '~/services/doh-resolver';
 import { CleanPlayerModal } from '~/components/clean-player/CleanPlayerModal';
 import { Toast, type ToastMessage } from '~/components/ui/Toast';
@@ -46,6 +47,12 @@ interface CheckResult {
 async function extractDirectMediaStream(rawUrl: string): Promise<{ url: string; format: MediaFormatCategory } | null> {
   try {
     const cleanUrl = rawUrl.trim();
+
+    // 0. YouTube parser
+    const ytId = MediaSnifferService.extractYouTubeVideoId(cleanUrl);
+    if (ytId) {
+      return { url: MediaSnifferService.createYouTubeEmbedUrl(ytId), format: 'YOUTUBE' };
+    }
 
     // 1. Videy.co parser
     const videyMatch = cleanUrl.match(/videy\.co\/v\/\?id=([a-zA-Z0-9_-]+)/i);
@@ -183,8 +190,19 @@ export default function LinkCheckerPage() {
   };
 
   const handleDownload = (media?: MediaMetadata) => {
-    const targetUrl = media?.sourceUrl ?? result?.resolvedMediaUrl ?? inputUrl;
     const targetFormat = media?.formatCategory ?? result?.mediaFormat ?? 'MP4';
+    if (targetFormat === 'YOUTUBE') {
+      setToast({
+        id: Date.now().toString(),
+        type: 'info',
+        title: 'YouTube Clean Embed Mode',
+        message: 'Pengunduhan langsung YouTube dinonaktifkan sesuai kebijakan Chrome Web Store. Anda dapat menonton bebas iklan di Clean Player.',
+        durationMs: 4500
+      });
+      return;
+    }
+
+    const targetUrl = media?.sourceUrl ?? result?.resolvedMediaUrl ?? inputUrl;
 
     setToast({
       id: Date.now().toString(),
