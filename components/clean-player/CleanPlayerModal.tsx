@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import Hls from 'hls.js';
-import { X, Film, AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
+import { X, Film, AlertTriangle, RefreshCw, Loader2, ShieldAlert, WifiOff, FileQuestion, Ban } from 'lucide-react';
 import { PlayerControls } from './PlayerControls';
 import type { MediaMetadata } from '~/types/media';
 
@@ -8,6 +8,13 @@ interface CleanPlayerModalProps {
   media: MediaMetadata | null;
   onClose: () => void;
   onDownload: (media: MediaMetadata) => void;
+}
+
+interface ErrorDetails {
+  title: string;
+  message: string;
+  statusCode?: number | string;
+  type: 'EXPIRED' | 'FORBIDDEN' | 'NETWORK' | 'FORMAT' | 'UNKNOWN';
 }
 
 export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
@@ -29,7 +36,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
   const [playbackRate, setPlaybackRate] = useState<number>(1);
   const [hlsLevels, setHlsLevels] = useState<{ height: number; bitrate: number }[]>([]);
   const [currentHlsLevel, setCurrentHlsLevel] = useState<number>(-1);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errorDetails, setErrorDetails] = useState<ErrorDetails | null>(null);
   const [isLoadingMedia, setIsLoadingMedia] = useState<boolean>(true);
   const [isVertical, setIsVertical] = useState<boolean>(false);
 
@@ -43,7 +50,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
     if (!media || !videoRef.current) return;
 
     const video = videoRef.current;
-    setErrorMsg(null);
+    setErrorDetails(null);
     setIsLoadingMedia(true);
     setHlsLevels([]);
     setCurrentHlsLevel(-1);
@@ -86,19 +93,39 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
         });
 
         hlsInstance.on(Hls.Events.ERROR, (_event, data) => {
+          const httpStatus = data.response?.code;
+
           if (data.fatal) {
-            switch (data.type) {
-              case Hls.ErrorTypes.NETWORK_ERROR:
-                hlsInstance.startLoad();
-                break;
-              case Hls.ErrorTypes.MEDIA_ERROR:
-                hlsInstance.recoverMediaError();
-                break;
-              default:
-                hlsInstance.destroy();
-                setIsLoadingMedia(false);
-                setErrorMsg('Gagal memuat stream HLS dari server sumber.');
-                break;
+            hlsInstance.destroy();
+            setIsLoadingMedia(false);
+
+            if (httpStatus === 404 || httpStatus === 410) {
+              setErrorDetails({
+                type: 'EXPIRED',
+                statusCode: httpStatus,
+                title: 'Tautan Stream Kadaluwarsa (404 Not Found)',
+                message: 'Berkas playlist stream .m3u8 sudah tidak ditemukan atau masa aktif tautan telah berakhir di server sumber.'
+              });
+            } else if (httpStatus === 403 || httpStatus === 401) {
+              setErrorDetails({
+                type: 'FORBIDDEN',
+                statusCode: httpStatus,
+                title: 'Akses Dibatasi oleh Server (403 Forbidden)',
+                message: 'Server penyedia video memblokir izin pemutaran langsung (CORS / token autentikasi sesi kadaluwarsa).'
+              });
+            } else if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+              setErrorDetails({
+                type: 'NETWORK',
+                statusCode: httpStatus || 'Network',
+                title: 'Koneksi ke Server Stream Terputus',
+                message: 'Gagal mengunduh fragmen video HLS. Periksa koneksi internet Anda atau coba muat ulang.'
+              });
+            } else {
+              setErrorDetails({
+                type: 'FORMAT',
+                title: 'Format Media HLS Tidak Kompatibel',
+                message: 'Terjadi kesalahan saat mendekode segmen video dari server sumber.'
+              });
             }
           }
         });
@@ -107,7 +134,11 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
         video.play().catch(() => setIsPlaying(false));
       } else {
         setIsLoadingMedia(false);
-        setErrorMsg('Format streaming HLS tidak didukung di browser ini.');
+        setErrorDetails({
+          type: 'FORMAT',
+          title: 'Format Tidak Didukung',
+          message: 'Browser ini tidak mendukung pemutaran stream HLS secara native.'
+        });
       }
     } else {
       // Direct MP4 / WebM
@@ -138,9 +169,70 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
     }
   };
 
-  const handleVideoError = () => {
+  // Mendiagnosis error spesifik pada file MP4/WebM langsung
+  const handleVideoError = async () => {
     setIsLoadingMedia(false);
-    setErrorMsg('Tidak dapat memutar video. Berkas video tidak ditemukan, link telah kedaluwarsa, atau dibatasi oleh server sumber.');
+
+    if (!media) return;
+
+    try {
+      // Lakukan pengecekan status HTTP langsung ke URL sumber
+      const res = await fetch(media.sourceUrl, { method: 'HEAD' });
+
+      if (res.status === 404 || res.status === 410) {
+        setErrorDetails({
+          type: 'EXPIRED',
+          statusCode: res.status,
+          title: 'Tautan Video Kadaluwarsa (404 Not Found)',
+          message: 'Berkas video sudah dihapus atau tautan telah habis masa berlakunya di server penyedia.'
+        });
+        return;
+      }
+
+      if (res.status === 403 || res.status === 401) {
+        setErrorDetails({
+          type: 'FORBIDDEN',
+          statusCode: res.status,
+          title: 'Akses Dibatasi oleh Server (403 Forbidden)',
+          message: 'Server sumber menolak akses pemutaran (Hotlink Protection / proteksi referer ketat).'
+        });
+        return;
+      }
+
+      if (res.status >= 500) {
+        setErrorDetails({
+          type: 'NETWORK',
+          statusCode: res.status,
+          title: `Server Sumber Mengalami Gangguan (${res.status})`,
+          message: 'Server penyedia video sedang bermasalah atau tidak merespons permintaan pemutaran.'
+        });
+        return;
+      }
+    } catch {
+      // Fetch gagal (mungkin CORS atau offline)
+    }
+
+    // Default error berdasarkan kode video element
+    const errCode = videoRef.current?.error?.code;
+    if (errCode === 2) {
+      setErrorDetails({
+        type: 'NETWORK',
+        title: 'Koneksi Jaringan Terputus',
+        message: 'Gagal mengunduh berkas video karena kendala jaringan internet.'
+      });
+    } else if (errCode === 3 || errCode === 4) {
+      setErrorDetails({
+        type: 'FORBIDDEN',
+        title: 'Akses Dibatasi atau Tautan Kadaluwarsa',
+        message: 'Server sumber menolak akses streaming atau berkas video tidak lagi tersedia di alamat tersebut.'
+      });
+    } else {
+      setErrorDetails({
+        type: 'UNKNOWN',
+        title: 'Gagal Memuat Video',
+        message: 'Terjadi kendala saat memuat berkas video dari server sumber.'
+      });
+    }
   };
 
   // Keyboard Shortcuts (Hotkeys)
@@ -276,10 +368,24 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
   };
 
   const handleRetry = () => {
-    setErrorMsg(null);
+    setErrorDetails(null);
     setIsLoadingMedia(true);
     if (videoRef.current) {
       videoRef.current.load();
+    }
+  };
+
+  const renderErrorIcon = () => {
+    if (!errorDetails) return null;
+    switch (errorDetails.type) {
+      case 'EXPIRED':
+        return <FileQuestion className="w-9 h-9 text-amber-400" />;
+      case 'FORBIDDEN':
+        return <Ban className="w-9 h-9 text-red-400" />;
+      case 'NETWORK':
+        return <WifiOff className="w-9 h-9 text-blue-400" />;
+      default:
+        return <AlertTriangle className="w-9 h-9 text-red-400" />;
     }
   };
 
@@ -301,7 +407,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
 
           <button
             onClick={onClose}
-            className="p-1.5 rounded-full bg-white/20 hover:bg-white/40 text-white transition-colors"
+            className="p-1.5 rounded-full bg-white/20 hover:bg-white/40 text-white transition-colors cursor-pointer"
             title="Tutup Pemutar (Esc)"
           >
             <X className="w-4 h-4" />
@@ -324,30 +430,46 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
         />
 
         {/* Loading Spinner */}
-        {isLoadingMedia && !errorMsg && (
+        {isLoadingMedia && !errorDetails && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 z-25 pointer-events-none">
             <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
             <span className="text-xs font-semibold text-zinc-300">Memuat Video...</span>
           </div>
         )}
 
-        {/* Error Notification Banner with Retry */}
-        {errorMsg && (
+        {/* Spesifik Error Notification Banner with Retry */}
+        {errorDetails && (
           <div className="absolute inset-0 flex items-center justify-center p-6 bg-black/90 z-30">
-            <div className="p-5 rounded-2xl bg-red-950/80 border border-red-500/50 text-white flex flex-col items-center text-center gap-3 max-w-md">
-              <AlertTriangle className="w-8 h-8 text-red-400 animate-bounce" />
-              <p className="text-xs font-medium leading-relaxed">{errorMsg}</p>
-              <div className="flex items-center gap-2 mt-1">
+            <div className="p-6 rounded-3xl bg-zinc-900/95 border border-zinc-700 text-white flex flex-col items-center text-center gap-3.5 max-w-md shadow-2xl backdrop-blur-xl animate-in zoom-in-95 duration-150">
+              <div className="w-16 h-16 rounded-2xl bg-zinc-800 flex items-center justify-center">
+                {renderErrorIcon()}
+              </div>
+
+              <div>
+                <h4 className="text-sm font-bold text-white tracking-tight">
+                  {errorDetails.title}
+                </h4>
+                {errorDetails.statusCode && (
+                  <span className="inline-block mt-1 px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-400 text-[10px] font-mono font-semibold">
+                    Status: {errorDetails.statusCode}
+                  </span>
+                )}
+                <p className="text-xs text-zinc-300 leading-relaxed mt-2">
+                  {errorDetails.message}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2.5 pt-1 w-full">
                 <button
                   onClick={handleRetry}
-                  className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg flex items-center gap-1.5"
+                  className="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-lg shadow-blue-900/30 cursor-pointer"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                   <span>Coba Lagi</span>
                 </button>
                 <button
                   onClick={onClose}
-                  className="px-3.5 py-1.5 bg-white/20 hover:bg-white/30 text-white text-xs font-bold rounded-lg"
+                  className="py-2.5 px-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold rounded-xl transition-all cursor-pointer"
                 >
                   Tutup
                 </button>
