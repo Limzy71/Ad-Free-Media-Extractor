@@ -6,11 +6,6 @@ import type { SecurityVerificationResult } from './security';
  * Komunikasi antar Service Worker, Content Script, dan Popup
  */
 export type ExtensionMessage =
-  // Event ketika media terdeteksi oleh Service Worker
-  | {
-      type: 'MEDIA_DETECTED';
-      payload: MediaMetadata;
-    }
   // Request daftar media aktif dari tab
   | {
       type: 'GET_TAB_MEDIA_REQUEST';
@@ -46,10 +41,14 @@ export type ExtensionMessage =
       type: 'TRIGGER_CLEAN_PLAYER';
       payload: MediaMetadata;
     }
+  // Content script meminta background menginjeksi pageGuard (MAIN world) di frame ini
+  | {
+      type: 'INSTALL_PAGE_GUARD';
+    }
   // Content script melaporkan jumlah iklan/tracker yang dibersihkan
   | {
       type: 'ADS_BLOCKED_COUNT_UPDATE';
-      payload: { tabId: number; count: number };
+      payload: { tabId?: number; count: number };
     }
   // Popup meminta jumlah iklan yang dibersihkan dari background
   | {

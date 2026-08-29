@@ -201,9 +201,11 @@ export class MediaSnifferService {
   }
 
   /**
-   * Menghasilkan URL embed resmi tanpa pelacak (youtube-nocookie.com)
+   * Menghasilkan URL embed resmi tanpa pelacak (youtube-nocookie.com).
+   * Menggunakan bentuk paling standar & kompatibel untuk memaksimalkan peluang
+   * video dapat disematkan (embedding disabled adalah batasan pemilik video).
    */
   public static createYouTubeEmbedUrl(videoId: string): string {
-    return `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&modestbranding=1&rel=0&enablejsapi=1`;
+    return `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&rel=0`;
   }
 }

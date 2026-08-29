@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import Hls from 'hls.js';
-import { X, Film, AlertTriangle, RefreshCw, Loader2, FileQuestion, Ban, WifiOff, ExternalLink } from 'lucide-react';
+import { X, Film, AlertTriangle, RefreshCw, Loader2, FileQuestion, Ban, WifiOff, ExternalLink, FileX } from 'lucide-react';
 import { PlayerControls } from './PlayerControls';
 import { DohResolverService } from '~/services/doh-resolver';
 import type { MediaMetadata } from '~/types/media';
@@ -15,11 +15,12 @@ interface ErrorDetails {
   title: string;
   message: string;
   statusCode?: number | string;
-  type: 'EXPIRED' | 'FORBIDDEN' | 'NETWORK' | 'FORMAT' | 'UNKNOWN';
+  type: 'EXPIRED' | 'FORBIDDEN' | 'NETWORK' | 'FORMAT' | 'NOT_A_VIDEO' | 'UNKNOWN';
+  hideActionButtons?: boolean;
 }
 
 function extractYouTubeId(url: string): string | null {
-  const match = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+  const match = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/|v\/|watch\?.+&v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
   return match ? match[1] : null;
 }
 
@@ -87,6 +88,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
             setCurrentHlsLevel(data.levels.length - 1);
           }
           setIsLoadingMedia(false);
+          setBypassStage('DONE');
           video.play().catch(() => setIsPlaying(false));
         });
 
@@ -97,7 +99,6 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
         hlsInstance.on(Hls.Events.ERROR, (_event, data) => {
           if (data.fatal) {
             if (bypassStage === 'DIRECT' && media) {
-              // Otomatis coba via Backend Proxy
               setBypassStage('PROXY');
               setIsLoadingMedia(true);
               const proxyUrl = DohResolverService.getBackendProxyUrl(media.sourceUrl, media.pageUrl);
@@ -110,7 +111,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
             setErrorDetails({
               type: 'NETWORK',
               title: 'Koneksi ke Server Stream Terputus',
-              message: 'Gagal mengunduh segmen video stream HLS. Coba muat ulang.'
+              message: 'Gagal mengunduh segmen video stream HLS. Pastikan server proxy aktif atau coba muat ulang.'
             });
           }
         });
@@ -164,17 +165,20 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
     const { videoWidth, videoHeight, duration: vidDuration } = videoRef.current;
     setDuration(vidDuration || 0);
     setIsLoadingMedia(false);
+    setBypassStage('DONE');
     setErrorDetails(null);
     setIsVertical(videoHeight > videoWidth);
   };
 
   /**
-   * Handler error otomatis dengan fallback ke Backend Proxy (DoH & Anti-Hotlink)
+   * Handler error cerdas:
+   * 1. Coba lewati proteksi via Backend Proxy (DoH + cURL Referer spoofing)
+   * 2. Jika Backend Proxy juga gagal, analisis penyebab sebenarnya (Bukan Video / Kadaluwarsa / Gangguan)
    */
   const handleVideoError = async () => {
     if (!media || !videoRef.current) return;
 
-    // JIKA TAHAP DIRECT GAGAL, OTOMATIS COBA MELALUI BACKEND PROXY (DoH & CORS BYPASS)
+    // TAHAP 1: JIKA DIRECT GAGAL, MAKA HARUS DICOBA LEWAT BACKEND PROXY TERLEBIH DAHULU
     if (bypassStage === 'DIRECT') {
       setBypassStage('PROXY');
       setIsLoadingMedia(true);
@@ -182,44 +186,53 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
       const isHls =
         media.formatCategory === 'HLS' ||
         media.sourceUrl.includes('.m3u8') ||
-        media.mimeType === 'application/x-mpegURL';
+        media.mimeType === 'application/x-mpegURL' ||
+        media.mimeType === 'application/vnd.apple.mpegurl';
 
       const proxyUrl = DohResolverService.getBackendProxyUrl(media.sourceUrl, media.pageUrl);
 
-      // Cek apakah server backend merespons proxy
       try {
-        const testRes = await fetch(proxyUrl, { method: 'HEAD' });
-        if (testRes.ok || testRes.status === 206 || testRes.status === 200) {
-          loadMediaStream(proxyUrl, isHls);
-          return;
-        }
-      } catch {
-        // Coba pasang langsung ke video element
         loadMediaStream(proxyUrl, isHls);
         return;
-      }
+      } catch {}
     }
 
-    // JIKA PROXY JUGA GAGAL, TAMPILKAN DIAGNOSIS LENGKAP
+    // TAHAP 2: JIKA PROXY JUGA GAGAL, ANALISIS AKAR PENYEBAB SECARA AKURAT
     setIsLoadingMedia(false);
 
     try {
-      const res = await fetch(media.sourceUrl, { method: 'HEAD' });
+      const res = await fetch(media.sourceUrl, { method: 'HEAD', redirect: 'follow' });
+      const contentType = res.headers.get('content-type') || '';
+
       if (res.status === 404 || res.status === 410) {
         setErrorDetails({
           type: 'EXPIRED',
           statusCode: res.status,
           title: 'Tautan Video Kadaluwarsa (404 Not Found)',
-          message: 'Berkas video sudah dihapus atau tautan telah habis masa berlakunya di server penyedia.'
+          message: 'Berkas video sudah dihapus atau masa berlakunya telah berakhir di server penyedia.',
+          hideActionButtons: true
         });
         return;
       }
+
+      // HANYA JIKA Content-Type jelas-jelas HTML dan bukan media/stream
+      if (contentType && !/video|audio|application\/octet-stream|application\/mpegurl|vnd\.apple\.mpegurl|dash/i.test(contentType)) {
+        setErrorDetails({
+          type: 'NOT_A_VIDEO',
+          title: 'Tautan Bukan Berkas Media Langsung',
+          message: `Tautan ini mengarah ke halaman web biasa (${contentType.split(';')[0]}), bukan berkas video langsung. Anda dapat membukanya di web host dengan perlindungan ad-blocker ekstensi.`,
+          hideActionButtons: false
+        });
+        return;
+      }
+
       if (res.status === 403 || res.status === 401) {
         setErrorDetails({
           type: 'FORBIDDEN',
           statusCode: res.status,
           title: 'Akses Dibatasi oleh Server (403 Forbidden)',
-          message: 'Server sumber menolak akses streaming langsung dari luar domainnya (Hotlink Protection).'
+          message: 'Server sumber menolak akses streaming langsung. Coba muat ulang atau buka situs host.',
+          hideActionButtons: false
         });
         return;
       }
@@ -227,13 +240,22 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
 
     setErrorDetails({
       type: 'NETWORK',
-      title: 'Domain Diblokir atau Gangguan Server',
-      message: 'Server video tidak merespons. Pastikan server backend (php artisan serve) berjalan di port 8000 untuk melewati blokir.'
+      title: 'Tidak Dapat Memuat Stream Video',
+      message: 'Gagal menghubungkan ke server video. Pastikan backend proxy (php artisan serve) aktif di localhost:8000 untuk melewati proteksi.',
+      hideActionButtons: false
     });
   };
 
   const handleOpenSourcePage = () => {
     if (media?.pageUrl) {
+      chrome.tabs.create({ url: media.pageUrl });
+    }
+  };
+
+  const handleOpenYoutube = () => {
+    if (youtubeVideoId) {
+      chrome.tabs.create({ url: `https://www.youtube.com/watch?v=${youtubeVideoId}` });
+    } else if (media?.pageUrl) {
       chrome.tabs.create({ url: media.pageUrl });
     }
   };
@@ -284,7 +306,8 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
       const isHls =
         media.formatCategory === 'HLS' ||
         media.sourceUrl.includes('.m3u8') ||
-        media.mimeType === 'application/x-mpegURL';
+        media.mimeType === 'application/x-mpegURL' ||
+        media.mimeType === 'application/vnd.apple.mpegurl';
       loadMediaStream(media.sourceUrl, isHls);
     }
   };
@@ -292,10 +315,16 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
   const renderErrorIcon = () => {
     if (!errorDetails) return null;
     switch (errorDetails.type) {
-      case 'EXPIRED': return <FileQuestion className="w-9 h-9 text-amber-400" />;
-      case 'FORBIDDEN': return <Ban className="w-9 h-9 text-red-400" />;
-      case 'NETWORK': return <WifiOff className="w-9 h-9 text-blue-400" />;
-      default: return <AlertTriangle className="w-9 h-9 text-red-400" />;
+      case 'NOT_A_VIDEO':
+        return <FileX className="w-10 h-10 text-rose-400" />;
+      case 'EXPIRED':
+        return <FileQuestion className="w-10 h-10 text-amber-400" />;
+      case 'FORBIDDEN':
+        return <Ban className="w-10 h-10 text-red-400" />;
+      case 'NETWORK':
+        return <WifiOff className="w-10 h-10 text-blue-400" />;
+      default:
+        return <AlertTriangle className="w-10 h-10 text-amber-400" />;
     }
   };
 
@@ -311,20 +340,41 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
             <Film className="w-4 h-4 text-blue-400" />
             <span className="truncate max-w-md">{media.pageTitle || 'Pemutar Video Bersih'}</span>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-full bg-white/20 hover:bg-white/40 text-white transition-colors cursor-pointer" title="Tutup (Esc)">
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            {youtubeVideoId && (
+              <button
+                onClick={handleOpenYoutube}
+                className="px-3 py-1.5 rounded-full bg-zinc-800/90 hover:bg-zinc-700 border border-zinc-600/60 text-white text-[11px] font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                title="Buka di YouTube (untuk video yang embedding-nya dinonaktifkan / error 153)"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-zinc-300" />
+                Buka di YouTube
+              </button>
+            )}
+            <button onClick={onClose} className="p-1.5 rounded-full bg-white/20 hover:bg-white/40 text-white transition-colors cursor-pointer" title="Tutup (Esc)">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
-        {/* YouTube Clean Embed */}
+        {/* YouTube Clean Embed (Fix Error 153 dengan referrerpolicy dan origin) */}
         {youtubeVideoId ? (
-          <iframe
-            src={`https://www.youtube-nocookie.com/embed/${youtubeVideoId}?autoplay=1&modestbranding=1&rel=0`}
-            title={media.pageTitle || 'YouTube Video'}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            allowFullScreen
-            className="w-full h-full border-0"
-          />
+          <>
+            <iframe
+              src={`https://www.youtube-nocookie.com/embed/${youtubeVideoId}?autoplay=1&rel=0`}
+              title={media.pageTitle || 'YouTube Video'}
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowFullScreen
+              referrerPolicy="no-referrer"
+              className="w-full h-full border-0"
+            />
+            {/* Hint bar untuk error 153 (embedding disabled / age-restricted) */}
+            <div className="absolute bottom-0 inset-x-0 p-3 bg-gradient-to-t from-black/80 to-transparent flex items-center justify-between z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+              <span className="text-[11px] text-zinc-300 drop-shadow">
+                Video tidak muncul (error 153)? Pemilik menonaktifkan penyematan. Klik "Buka di YouTube".
+              </span>
+            </div>
+          </>
         ) : (
           <video
             ref={videoRef}
@@ -351,28 +401,64 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
           </div>
         )}
 
-        {/* Error Banner */}
+        {/* Cerdas Error Banner Modal */}
         {!youtubeVideoId && errorDetails && (
-          <div className="absolute inset-0 flex items-center justify-center p-6 bg-black/90 z-30">
-            <div className="p-6 rounded-3xl bg-zinc-900/95 border border-zinc-700 text-white flex flex-col items-center text-center gap-3.5 max-w-md shadow-2xl backdrop-blur-xl animate-in zoom-in-95 duration-150">
-              <div className="w-16 h-16 rounded-2xl bg-zinc-800 flex items-center justify-center">{renderErrorIcon()}</div>
-              <div>
-                <h4 className="text-sm font-bold text-white tracking-tight">{errorDetails.title}</h4>
-                {errorDetails.statusCode && (
-                  <span className="inline-block mt-1 px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-400 text-[10px] font-mono font-semibold">Status: {errorDetails.statusCode}</span>
-                )}
-                <p className="text-xs text-zinc-300 leading-relaxed mt-2">{errorDetails.message}</p>
+          <div className="absolute inset-0 flex items-center justify-center p-6 bg-black/90 z-30 animate-in fade-in duration-200">
+            <div className="p-6 rounded-3xl bg-zinc-900/95 border border-zinc-700 text-white flex flex-col items-center text-center gap-4 max-w-md shadow-2xl backdrop-blur-xl animate-in zoom-in-95 duration-150">
+              <div className="w-16 h-16 rounded-2xl bg-zinc-800/80 border border-zinc-700 flex items-center justify-center">
+                {renderErrorIcon()}
               </div>
-              <div className="flex flex-col gap-2 pt-1 w-full">
-                <div className="flex items-center gap-2 w-full">
-                  <button onClick={handleRetry} className="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-lg shadow-blue-900/30 cursor-pointer">
-                    <RefreshCw className="w-3.5 h-3.5" /><span>Coba Lagi</span>
+
+              <div className="space-y-1.5">
+                <h4 className="text-sm font-bold text-white tracking-tight">
+                  {errorDetails.title}
+                </h4>
+                {errorDetails.statusCode && (
+                  <span className="inline-block px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-400 text-[10px] font-mono font-semibold">
+                    Status: {errorDetails.statusCode}
+                  </span>
+                )}
+                <p className="text-xs text-zinc-300 leading-relaxed pt-1">
+                  {errorDetails.message}
+                </p>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="w-full pt-1">
+                {errorDetails.hideActionButtons ? (
+                  <button
+                    onClick={onClose}
+                    className="w-full py-3 px-5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-white text-xs font-bold rounded-2xl border border-zinc-700 transition-all shadow-lg cursor-pointer"
+                  >
+                    Mengerti & Tutup Pemutar
                   </button>
-                  <button onClick={handleOpenSourcePage} className="flex-1 py-2.5 px-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 border border-zinc-700 transition-all cursor-pointer" title="Buka situs sumber">
-                    <ExternalLink className="w-3.5 h-3.5 text-zinc-400" /><span>Buka Situs Host</span>
-                  </button>
-                </div>
-                <button onClick={onClose} className="w-full py-2 text-xs font-semibold text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer">Tutup Pemutar</button>
+                ) : (
+                  <div className="flex flex-col gap-2 w-full">
+                    <div className="flex items-center gap-2 w-full">
+                      <button
+                        onClick={handleRetry}
+                        className="flex-1 py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition-all shadow-lg shadow-blue-900/30 cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Coba Lagi</span>
+                      </button>
+                      <button
+                        onClick={handleOpenSourcePage}
+                        className="flex-1 py-2.5 px-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 border border-zinc-700 transition-all cursor-pointer"
+                        title="Buka situs sumber"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5 text-zinc-400" />
+                        <span>Buka Situs Host</span>
+                      </button>
+                    </div>
+                    <button
+                      onClick={onClose}
+                      className="w-full py-2 text-xs font-semibold text-zinc-500 hover:text-zinc-300 transition-colors cursor-pointer"
+                    >
+                      Tutup Pemutar
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>

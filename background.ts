@@ -11,6 +11,18 @@ const tabMediaMap = new Map<number, MediaMetadata[]>();
 // Penyimpanan jumlah iklan/tracker yang dibersihkan per tab
 const tabBlockedAdsMap = new Map<number, number>();
 
+const SPAM_AFFILIATE_PATTERNS: RegExp[] = [
+  /videey\.pro/i,
+  /videey\.co/i,
+  /ww\d+\.viday/i,
+  /shope\.ee/i,
+  /s\.shopee\.co\.id/i,
+  /shopee\.co\.id\/(?:universal-link|affiliate)/i,
+  /tokopedia\.link/i,
+  /invol\.co/i,
+  /accesstrade/i,
+];
+
 /**
  * 0. Inisialisasi Aturan Pemblokir Iklan Dinamis (DNR Rulesets)
  */
@@ -80,8 +92,7 @@ chrome.webRequest.onHeadersReceived.addListener(
         const currentList = tabMediaMap.get(details.tabId) || [];
         // Cek apakah URL persis sama (full duplicate)
         const exactDuplicate = currentList.some((m) => m.sourceUrl === mediaItem.sourceUrl);
-
-        if (!exactDuplicate) {
+          if (!exactDuplicate) {
           // Cek apakah ada entry lama dari domain yang sama dengan kualitas lebih rendah
           const newScore = MediaSnifferService.qualityScore(mediaItem.sourceUrl, mediaItem.contentLengthBytes);
           const lowerQualityIdx = currentList.findIndex((m) => {
@@ -105,14 +116,6 @@ chrome.webRequest.onHeadersReceived.addListener(
           tabMediaMap.set(details.tabId, currentList);
 
           updateExtensionBadge(details.tabId, currentList.length);
-
-          const msg: ExtensionMessage = {
-            type: 'MEDIA_DETECTED',
-            payload: mediaItem
-          };
-          chrome.tabs.sendMessage(details.tabId, msg).catch(() => {
-            // Content script belum siap, abaikan
-          });
         }
       });
     }
@@ -157,12 +160,6 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
         const updatedList = [mediaItem];
         tabMediaMap.set(tabId, updatedList);
         updateExtensionBadge(tabId, updatedList.length);
-
-        const msg: ExtensionMessage = {
-          type: 'MEDIA_DETECTED',
-          payload: mediaItem
-        };
-        chrome.tabs.sendMessage(tabId, msg).catch(() => {});
       }
     }
   }
@@ -173,6 +170,15 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
  */
 chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
   if (details.frameId !== 0 || !details.url || !details.url.startsWith('http')) return;
+
+  const isSpamRedirect = SPAM_AFFILIATE_PATTERNS.some((p) => p.test(details.url));
+  if (isSpamRedirect) {
+    const warningUrl = chrome.runtime.getURL(
+      'tabs/warning.html?url=' + encodeURIComponent(details.url) + '&threat=SPAM_REDIRECT'
+    );
+    chrome.tabs.update(details.tabId, { url: warningUrl }).catch(() => {});
+    return;
+  }
 
   const result = await LinkVerifierService.verifyUrl(details.url);
 
@@ -228,9 +234,29 @@ chrome.runtime.onMessage.addListener(
         return false;
       }
 
+      case 'INSTALL_PAGE_GUARD': {
+        // Injeksi pageGuard ke MAIN world frame pengirim via chrome.scripting —
+        // kebal CSP host dan menjangkau iframe (content script berjalan all_frames).
+        const tabId = sender.tab?.id;
+        if (tabId !== undefined) {
+          const frameIds = sender.frameId !== undefined ? [sender.frameId] : undefined;
+          chrome.scripting
+            .executeScript({
+              target: frameIds ? { tabId, frameIds } : { tabId },
+              world: 'MAIN',
+              func: AdBlockerService.pageGuardMainWorld
+            })
+            .catch((err) => console.warn('Gagal injeksi pageGuard MAIN world:', err));
+        }
+        sendResponse({ success: true });
+        return false;
+      }
+
       case 'ADS_BLOCKED_COUNT_UPDATE': {
-        const { tabId, count } = message.payload;
-        tabBlockedAdsMap.set(tabId, count);
+        const tabId = message.payload?.tabId || sender.tab?.id;
+        if (tabId) {
+          tabBlockedAdsMap.set(tabId, message.payload?.count || 0);
+        }
         return false;
       }
 

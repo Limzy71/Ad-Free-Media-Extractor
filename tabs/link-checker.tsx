@@ -21,6 +21,7 @@ import {
   Sparkles,
   Layers,
   ExternalLink,
+  Info,
   Radio
 } from 'lucide-react';
 import { LinkVerifierService } from '~/services/link-verifier';
@@ -30,6 +31,7 @@ import { CleanPlayerModal } from '~/components/clean-player/CleanPlayerModal';
 import { Toast, type ToastMessage } from '~/components/ui/Toast';
 import type { SecurityVerificationResult, SecurityStatus } from '~/types/security';
 import type { MediaMetadata, MediaFormatCategory } from '~/types/media';
+import type { ExtensionMessage } from '~/types/messages';
 import '~/style.css';
 
 interface CheckResult {
@@ -63,9 +65,18 @@ async function extractDirectMediaStream(rawUrl: string): Promise<{ url: string; 
     // 2. Format langsung (.m3u8, .mp4, .webm, .mpd)
     const urlWithoutQuery = cleanUrl.split('?')[0].toLowerCase();
     if (urlWithoutQuery.endsWith('.m3u8')) return { url: cleanUrl, format: 'HLS' };
-    if (urlWithoutQuery.endsWith('.webm')) return { url: cleanUrl, format: 'WEBM' };
-    if (urlWithoutQuery.endsWith('.mp4')) return { url: cleanUrl, format: 'MP4' };
     if (urlWithoutQuery.endsWith('.mpd')) return { url: cleanUrl, format: 'DASH' };
+
+    // Untuk file media langsung, verifikasi Content-Type terlebih dahulu agar
+    // tautan "palsu" (mis. .mp4 yang mengarah ke halaman HTML Shopee/media sosial)
+    // tidak dianggap sebagai video yang valid.
+    if (urlWithoutQuery.endsWith('.mp4') || urlWithoutQuery.endsWith('.webm')) {
+      const verified = await verifyDirectMediaUrl(cleanUrl);
+      if (verified) {
+        return { url: verified, format: formatFromUrl(cleanUrl) };
+      }
+      return null;
+    }
 
     // 3. Ekstraksi otomatis dari HTML halaman web (handles JS-rendered data blobs juga)
     const res = await fetch(cleanUrl);
@@ -80,6 +91,96 @@ async function extractDirectMediaStream(rawUrl: string): Promise<{ url: string; 
     }
 
     return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Verifikasi bahwa URL yang tampak sebagai berkas media langsung benar-benar
+ * mengembalikan konten video/audio (bukan HTML/redirect).
+ *
+ * Banyak shortener & hoster (mis. t.co) mengembalikan redirect berbentuk
+ * `meta-refresh` / `location.href` di dalam HTML — yang TIDAK diikuti oleh
+ * `fetch(..., redirect:'follow')`. Fungsi ini mengikuti rantai redirect secara
+ * manual (termasuk meta-refresh) sebelum memutuskan valid/tidak.
+ */
+async function verifyDirectMediaUrl(rawUrl: string): Promise<string | null> {
+  const visited = new Set<string>();
+
+  const tryHead = async (url: string): Promise<string | null> => {
+    try {
+      const res = await fetch(url, { method: 'HEAD', redirect: 'follow' });
+      const contentType = res.headers.get('content-type') || '';
+      if (/video|audio|application\/octet-stream|application\/mpegurl|vnd\.apple\.mpegurl|dash/i.test(contentType)) {
+        return res.url || url;
+      }
+      // HTML/unknown via HEAD -> perlu ikut redirect meta-refresh dari GET body
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  const followChain = async (url: string, depth: number): Promise<string | null> => {
+    if (depth > 5) return null;
+    if (visited.has(url)) return null;
+    visited.add(url);
+
+    // 1. Coba HEAD dulu (hemat bandwidth) — kalau langsung media, selesai.
+    const headResult = await tryHead(url);
+    if (headResult) return headResult;
+
+    // 2. GET body untuk cek meta-refresh / location redirect.
+    let res: Response;
+    try {
+      res = await fetch(url, { method: 'GET', redirect: 'follow' });
+    } catch {
+      return null;
+    }
+
+    if (!res.ok) return null;
+
+    const contentType = res.headers.get('content-type') || '';
+    if (/video|audio|application\/octet-stream|application\/mpegurl|vnd\.apple\.mpegurl|dash/i.test(contentType)) {
+      return res.url || url;
+    }
+
+    // Bukan konten media langsung. Jika berupa HTML, cek redirect meta-refresh/location
+    if (!/text\/html|application\/xhtml|text\/plain/i.test(contentType)) {
+      return null;
+    }
+
+    const body = await res.text();
+    const target = extractHtmlRedirectTarget(body, url);
+    if (target) {
+      return followChain(target, depth + 1);
+    }
+
+    // Tidak ada redirect: ini halaman web biasa, bukan media
+    return null;
+  };
+
+  return followChain(rawUrl, 0);
+}
+
+/**
+ * Mengekstrak target redirect berbasis HTML: meta-refresh (0;URL=...),
+ * window.location / document.location / location.replace(...).
+ */
+function extractHtmlRedirectTarget(html: string, baseUrl: string): string | null {
+  // Meta refresh: <meta http-equiv="refresh" content="0;URL=..."> atau 0;url=...
+  const metaMatch = html.match(/<meta[^>]+http-equiv=["']?refresh["']?[^>]+content=["']\s*\d*\s*;?\s*url\s*=\s*["']?([^"'>\s)]+)["']?/i)
+    || html.match(/content=["']\s*\d*\s*;?\s*uRL\s*=\s*["']?([^"'>\s)]+)["']?/i);
+
+  // location.href / window.location / location.replace
+  const jsMatch = html.match(/(?:window\.location|document\.location|location\.replace|location\.href)\s*[=:(]\s*["']([^"']+)["']/i);
+
+  const raw = metaMatch?.[1] || jsMatch?.[1];
+  if (!raw) return null;
+
+  try {
+    return new URL(raw, baseUrl).href;
   } catch {
     return null;
   }
@@ -199,7 +300,12 @@ export default function LinkCheckerPage() {
   const [error, setError] = useState<string | null>(null);
   const [activePlayMedia, setActivePlayMedia] = useState<MediaMetadata | null>(null);
   const [toast, setToast] = useState<ToastMessage | null>(null);
+  const [isCapturing, setIsCapturing] = useState<boolean>(false);
+  const [capturedList, setCapturedList] = useState<MediaMetadata[]>([]);
+  const [captureMsg, setCaptureMsg] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const pollTimerRef = useRef<number | null>(null);
+  const hasCapturedRef = useRef<boolean>(false);
 
   const handlePaste = async () => {
     try {
@@ -262,10 +368,25 @@ export default function LinkCheckerPage() {
     let playUrl = result?.resolvedMediaUrl;
     let formatCategory = result?.mediaFormat ?? 'MP4';
 
+    let usedPageFallback = false;
     if (!playUrl) {
       const extracted = await extractDirectMediaStream(fullUrl);
       playUrl = extracted?.url ?? fullUrl;
       formatCategory = extracted?.format ?? (playUrl.includes('.m3u8') ? 'HLS' : 'MP4');
+      usedPageFallback = !extracted;
+    }
+
+    // Jangan lempar pengguna ke tab baru: jika tidak ada berkas media langsung,
+    // tetap putar URL asli DI DALAM Clean Player. Modal sudah punya deteksi
+    // NOT_A_VIDEO (+ tombol "Buka Situs Host") dan fallback backend proxy.
+    if (usedPageFallback) {
+      setToast({
+        id: Date.now().toString(),
+        type: 'info',
+        title: 'Memutar URL Asli',
+        message: 'Belum ada berkas media langsung. Mencoba memutar URL asli di Clean Player — jika halaman web, gunakan "Buka & Tangkap" untuk situs anti-bot.',
+        durationMs: 5000
+      });
     }
 
     let domainTitle = 'Video Stream';
@@ -285,6 +406,104 @@ export default function LinkCheckerPage() {
     };
 
     setActivePlayMedia(mediaToPlay);
+  };
+
+  /**
+   * Open & Capture: buka tab hoster agar halaman + JS/anti-bot berjalan nyata, lalu
+   * polling background sniffer untuk menangkap URL media asli yang berhasil diunduh.
+   * Berguna untuk hoster berlapis (Cloudflare/token) yang gagal lewat fetch polos.
+   */
+  const handleOpenCapture = async () => {
+    if (!inputUrl || isCapturing) return;
+    const fullUrl = inputUrl.startsWith('http') ? inputUrl : `https://${inputUrl}`;
+
+    if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
+    pollTimerRef.current = null;
+    hasCapturedRef.current = false;
+
+    setCapturedList([]);
+    setCaptureMsg('Membuka tab hoster... Media akan ditangkap otomatis saat diputar.');
+    setIsCapturing(true);
+
+    try {
+      const tab = await chrome.tabs.create({ url: fullUrl, active: true });
+      if (tab.id === undefined) {
+        throw new Error('Tab id unavailable');
+      }
+      const tabId = tab.id;
+
+      const startedAt = Date.now();
+      pollTimerRef.current = window.setInterval(async () => {
+        // Timeout 2 menit
+        if (Date.now() - startedAt > 120_000) {
+          if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
+          pollTimerRef.current = null;
+          setIsCapturing(false);
+          if (!hasCapturedRef.current) {
+            setCaptureMsg('Belum ada media terdeteksi dalam 2 menit. Jika halaman membutuhkan klik "Putar", klik video di tab hoster lalu tunggu di sini.');
+          }
+          return;
+        }
+        await pollCaptureOnce(tabId);
+      }, 2500);
+
+      setToast({
+        id: Date.now().toString(),
+        type: 'info',
+        title: 'Mode Open & Capture Aktif',
+        message: 'Tab hoster dibuka. Klik video di tab tersebut jika diperlukan — media akan tertangkap otomatis.',
+        durationMs: 5000
+      });
+    } catch {
+      setIsCapturing(false);
+      setCaptureMsg('Gagal membuka tab hoster.');
+    }
+  };
+
+  const pollCaptureOnce = async (tabId: number): Promise<void> => {
+    try {
+      const res = await chrome.runtime.sendMessage<ExtensionMessage, { mediaList?: MediaMetadata[] }>({
+        type: 'GET_TAB_MEDIA_REQUEST',
+        payload: { tabId }
+      });
+
+      const list = res?.mediaList ?? [];
+      if (list.length === 0) return;
+
+      setCapturedList(list);
+
+      // Pertama kali media berhasil ditangkap -> hentikan polling & beri tahu sukses
+      if (!hasCapturedRef.current) {
+        hasCapturedRef.current = true;
+        setIsCapturing(false);
+        if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+        setCaptureMsg(null);
+        setToast({
+          id: Date.now().toString(),
+          type: 'success',
+          title: 'Media Berhasil Ditangkap!',
+          message: `${list.length} media terdeteksi dari tab hoster. Pilih video untuk diputar bebas iklan.`,
+          durationMs: 4500
+        });
+      }
+    } catch {
+      // Tab mungkin ditutup — hentikan polling
+      if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+      setIsCapturing(false);
+    }
+  };
+
+  const handleStopCapture = () => {
+    if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
+    pollTimerRef.current = null;
+    setIsCapturing(false);
+    setCaptureMsg(null);
+  };
+
+  const handlePlayCaptured = (media: MediaMetadata) => {
+    setActivePlayMedia(media);
   };
 
   const handleDownload = (media?: MediaMetadata) => {
@@ -384,22 +603,52 @@ export default function LinkCheckerPage() {
       {/* Main Container */}
       <main className="max-w-4xl w-full mx-auto px-6 py-10 space-y-8 flex-1">
         {/* Title Section */}
-        <div className="text-center space-y-3">
-          <h2 className="text-3xl font-extrabold text-white tracking-tight sm:text-4xl bg-gradient-to-r from-white via-zinc-200 to-zinc-400 bg-clip-text text-transparent">
-            Cek Keamanan & Putar Media
-          </h2>
-          <p className="text-sm text-zinc-400 max-w-xl mx-auto leading-relaxed">
-            Tempelkan tautan video atau halaman web apa pun. Sistem akan memindai ancaman keamanan,
-            membypass pembatasan DNS ISP, dan memutar media langsung dalam player bersih.
-          </p>
+        <div className="text-center space-y-4">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-950/60 border border-blue-700/50 text-blue-300 text-[11px] font-semibold">
+            <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+            Universal Ad-Free Media Extractor
+          </div>
+          <div className="space-y-1.5">
+            <h2 className="text-3xl font-extrabold text-white tracking-tight sm:text-4xl bg-gradient-to-r from-blue-300 via-white to-zinc-300 bg-clip-text text-transparent">
+              Periksa & Putar Media dengan Aman
+            </h2>
+            <p className="text-sm text-zinc-400 max-w-xl mx-auto leading-relaxed">
+              Tempelkan tautan video atau halaman web apa pun. Sistem memindai ancaman keamanan,
+              membypass pembatasan DNS ISP, lalu memutar media langsung dalam pemutar bersih bebas iklan.
+            </p>
+          </div>
+
+          {/* Step Indicator */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 max-w-2xl mx-auto pt-1">
+            {[
+              { num: '1', icon: <ClipboardPaste className="w-4 h-4" />, title: 'Tempel Tautan', desc: 'Paste URL video atau halaman' },
+              { num: '2', icon: <Search className="w-4 h-4" />, title: 'Pindai Keamanan', desc: 'Cek phishing, judi, malware, DNS' },
+              { num: '3', icon: <Play className="w-4 h-4 fill-current" />, title: 'Putar / Tangkap', desc: 'Tonton bebas iklan atau unduh' }
+            ].map((s) => (
+              <div key={s.num} className="flex items-center gap-3 p-3 rounded-2xl bg-zinc-900/70 border border-zinc-800 text-left">
+                <span className="w-8 h-8 shrink-0 rounded-xl bg-blue-600/20 border border-blue-700/50 text-blue-300 flex items-center justify-center text-xs font-black">
+                  {s.num}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-zinc-100 flex items-center gap-1.5">{s.icon}{s.title}</p>
+                  <p className="text-[10px] text-zinc-500 leading-tight mt-0.5">{s.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
 
         {/* Input Card */}
         <div className="bg-zinc-900/90 border border-zinc-800 rounded-3xl p-6 shadow-2xl space-y-4 backdrop-blur-xl">
-          <label className="text-xs font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-2">
-            <Link2 className="w-4 h-4 text-blue-400" />
-            Tautan / URL Target
-          </label>
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-2">
+              <Link2 className="w-4 h-4 text-blue-400" />
+              Tautan / URL Target
+            </label>
+            <span className="px-2.5 py-0.5 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-400 text-[10px] font-semibold">
+              MP4 • M3U8 • WEBM • MP3
+            </span>
+          </div>
 
           <div className="flex flex-col sm:flex-row gap-2.5">
             <div className="relative flex-1">
@@ -410,7 +659,8 @@ export default function LinkCheckerPage() {
                 value={inputUrl}
                 onChange={(e) => setInputUrl(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleCheck()}
-                placeholder="https://contoh.com/video.mp4 atau link web video..."
+                placeholder="https://contoh.com/video.mp4 atau link web video / hoster..."
+                aria-label="URL target video atau halaman web"
                 className="w-full pl-11 pr-4 py-3.5 bg-zinc-950/80 border border-zinc-700/70 rounded-2xl text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all font-mono"
               />
             </div>
@@ -419,6 +669,7 @@ export default function LinkCheckerPage() {
               onClick={handlePaste}
               className="px-4 py-3.5 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 border border-zinc-700 text-zinc-200 rounded-2xl transition-all flex items-center justify-center gap-2 text-xs font-bold shrink-0 hover:scale-102 cursor-pointer"
               title="Tempel dari Clipboard"
+              aria-label="Tempel tautan dari clipboard"
             >
               <ClipboardPaste className="w-4 h-4 text-zinc-400" />
               <span>Paste</span>
@@ -427,7 +678,7 @@ export default function LinkCheckerPage() {
             <button
               onClick={handleCheck}
               disabled={isChecking || !inputUrl.trim()}
-              className="px-6 py-3.5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition-all shrink-0 shadow-lg shadow-blue-900/30 hover:scale-102 cursor-pointer"
+              className="px-7 py-3.5 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 active:from-blue-700 active:to-blue-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2 transition-all shrink-0 shadow-lg shadow-blue-900/40 hover:scale-102 cursor-pointer"
             >
               {isChecking ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -441,20 +692,35 @@ export default function LinkCheckerPage() {
           <div className="flex items-center justify-between text-xs text-zinc-500 px-1 pt-1">
             <span className="flex items-center gap-1.5">
               <Zap className="w-3.5 h-3.5 text-amber-400" />
-              Tekan tombol <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300 font-mono text-[10px]">Enter</kbd> untuk mulai memindai secara instan.
+              Tekan <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-300 font-mono text-[10px]">Enter</kbd> untuk memindai instan.
+            </span>
+            <span className="hidden sm:flex items-center gap-1.5 text-[11px] text-zinc-500">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+              Terenkripsi & Zero Data Retention
             </span>
           </div>
         </div>
 
         {/* Loading Animation */}
         {isChecking && (
-          <div className="flex flex-col items-center justify-center py-12 gap-3 animate-pulse">
-            <div className="w-16 h-16 rounded-2xl bg-blue-900/30 border border-blue-700/40 flex items-center justify-center">
-              <ShieldCheck className="w-8 h-8 text-blue-400 animate-spin" />
+          <div className="flex flex-col items-center justify-center py-12 gap-4">
+            <div className="relative w-16 h-16">
+              <div className="absolute inset-0 rounded-2xl bg-blue-600/20 animate-ping"></div>
+              <div className="relative w-16 h-16 rounded-2xl bg-blue-900/40 border border-blue-700/50 flex items-center justify-center">
+                <ShieldCheck className="w-8 h-8 text-blue-400 animate-spin" />
+              </div>
             </div>
-            <div className="text-center space-y-1">
-              <p className="text-sm font-bold text-zinc-200">Sedang Menganalisis Keamanan & Media...</p>
-              <p className="text-xs text-zinc-500">Memeriksa DNS global (DoH), domain phishing, judi, malware, dan stream video asli</p>
+            <div className="text-center space-y-1.5">
+              <p className="text-sm font-bold text-zinc-200 flex items-center justify-center gap-2">
+                <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />
+                Sedang Menganalisis Keamanan & Media...
+              </p>
+              <p className="text-xs text-zinc-500 max-w-md mx-auto">
+                Memeriksa DNS global (DoH), domain phishing, judi, malware, dan mengekstrak stream video asli
+              </p>
+            </div>
+            <div className="w-56 h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+              <div className="h-full w-1/2 rounded-full bg-gradient-to-r from-blue-600 to-cyan-400 animate-pulse"></div>
             </div>
           </div>
         )}
@@ -473,22 +739,22 @@ export default function LinkCheckerPage() {
         {/* Result Cards Section */}
         {result && !isChecking && cfg && (
           <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-300">
-            {/* Meta Header Info */}
-            <div className="flex items-center justify-between text-xs text-zinc-400 px-1">
-              <span className="flex items-center gap-1.5 font-medium">
+            {/* Meta Summary Strip */}
+            <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+              <span className="flex items-center gap-1.5 text-xs text-zinc-400 font-medium">
                 <Clock className="w-3.5 h-3.5 text-zinc-500" />
-                Dipindai pukul {result.checkedAt}
+                Dipindai pukul <span className="text-zinc-300 font-bold">{result.checkedAt}</span>
               </span>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 {result.isDohResolved && (
-                  <span className="flex items-center gap-1 text-[11px] font-bold text-cyan-400 bg-cyan-950/60 px-2.5 py-0.5 rounded-full border border-cyan-800/60">
-                    <Radio className="w-3 h-3 text-cyan-400 animate-pulse" />
-                    DNS-over-HTTPS (Bypass ISP Aktif)
+                  <span className="flex items-center gap-1.5 text-[11px] font-bold text-cyan-300 bg-cyan-950/60 px-2.5 py-1 rounded-full border border-cyan-800/60">
+                    <Radio className="w-3 h-3 text-cyan-400" />
+                    Bypass DNS Aktif
                   </span>
                 )}
-                <span className="flex items-center gap-1.5 font-medium">
-                  <BarChart2 className="w-3.5 h-3.5 text-zinc-500" />
-                  Respons {result.responseTimeMs} ms
+                <span className="flex items-center gap-1.5 text-[11px] font-medium text-zinc-300 bg-zinc-900 px-2.5 py-1 rounded-full border border-zinc-800">
+                  <BarChart2 className="w-3 h-3 text-zinc-500" />
+                  {result.responseTimeMs} ms
                 </span>
               </div>
             </div>
@@ -551,25 +817,37 @@ export default function LinkCheckerPage() {
                     <span>Aksi Pemutar & Unduhan Media</span>
                   </h3>
                   {result.resolvedMediaUrl && (
-                    <span className="px-2.5 py-0.5 rounded-full bg-blue-950 border border-blue-700 text-blue-300 text-[10px] font-bold">
+                    <span className="px-2.5 py-1 rounded-full bg-blue-950 border border-blue-700 text-blue-300 text-[10px] font-bold">
                       Format: {result.mediaFormat}
                     </span>
                   )}
                 </div>
 
-                <p className="text-xs text-zinc-400 leading-relaxed">
-                  {result.resolvedMediaUrl
-                    ? 'Stream video berhasil diekstrak! Klik "Putar Bersih" untuk memutar video langsung tanpa iklan atau unduh ke perangkat.'
-                    : 'Tautan halaman web siap diputar. Klik "Putar Bersih" untuk mengekstrak dan memutar video di dalam player bersih.'}
-                </p>
+                {result.resolvedMediaUrl ? (
+                  <div className="flex items-start gap-2.5 p-3 rounded-2xl bg-emerald-950/40 border border-emerald-800/50">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <p className="text-xs text-emerald-200 font-semibold">Stream video berhasil diekstrak</p>
+                      <p className="text-[10px] text-emerald-300/70 font-mono truncate mt-0.5">{result.resolvedMediaUrl}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-start gap-2.5 p-3 rounded-2xl bg-blue-950/40 border border-blue-800/50">
+                    <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+                    <p className="text-xs text-blue-200 leading-relaxed">
+                      Media belum diekstrak dari halaman web ini. Gunakan <span className="font-bold">"Play"</span> untuk
+                      mengekstrak, atau <span className="font-bold">"Buka &amp; Tangkap"</span> di bawah untuk situs berlapis/anti-bot.
+                    </p>
+                  </div>
+                )}
 
                 <div className="flex flex-col sm:flex-row gap-3 pt-1">
                   <button
                     onClick={handleOpenClean}
-                    className="flex-1 py-3 px-5 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-2xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-900/30 transition-all hover:scale-102 cursor-pointer"
+                    className="flex-1 py-3 px-5 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 active:from-blue-700 active:to-blue-800 text-white rounded-2xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-900/40 transition-all hover:scale-102 cursor-pointer"
                   >
                     <Play className="w-4 h-4 fill-current" />
-                    <span>Putar Bersih (Tanpa Iklan)</span>
+                    <span>Play</span>
                   </button>
 
                   <button
@@ -580,6 +858,94 @@ export default function LinkCheckerPage() {
                     <span>Unduh Video</span>
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* 3. Open & Capture (Anti-Bot / Hoster Berlapis) */}
+            {result.security?.status !== 'BLOCKED' && (
+              <div className="p-6 rounded-3xl bg-indigo-950/40 border border-indigo-800/60 space-y-4 shadow-xl">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Radio className="w-4 h-4 text-cyan-400" />
+                    <span>Open &amp; Capture (Hoster Anti-Bot)</span>
+                  </h3>
+                  <span className="px-2.5 py-0.5 rounded-full bg-cyan-950 border border-cyan-700 text-cyan-300 text-[10px] font-bold">
+                    Tab Real-time
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {['Cloudflare', 'Token Dinamis', 'Meta-Redirect', 'Anti-Bot'].map((t) => (
+                    <span key={t} className="px-2 py-0.5 rounded-md bg-zinc-900/70 border border-indigo-800/40 text-[10px] font-semibold text-indigo-200/80">
+                      {t}
+                    </span>
+                  ))}
+                </div>
+
+                <p className="text-xs text-zinc-400 leading-relaxed">
+                  Untuk situs dengan proteksi berlapis yang gagal diekstrak otomatis. Fitur ini membuka situs
+                  di tab asli, lalu <span className="text-zinc-200 font-semibold">menangkap URL media asli</span> dari
+                  lalu lintas jaringan setelah video diputar.
+                </p>
+
+                {isCapturing ? (
+                  <div className="flex items-center gap-2.5 p-3 rounded-2xl bg-cyan-950/60 border border-cyan-800/60">
+                    <Loader2 className="w-4 h-4 text-cyan-400 animate-spin shrink-0" />
+                    <p className="text-xs text-cyan-200 flex-1">
+                      {captureMsg || 'Menangkap media dari tab hoster... Klik video di tab tersebut jika diperlukan.'}
+                    </p>
+                    <button
+                      onClick={handleStopCapture}
+                      className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-[11px] font-semibold"
+                    >
+                      Hentikan
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={handleOpenCapture}
+                    disabled={!inputUrl.trim()}
+                    className="w-full py-3 px-5 bg-cyan-600 hover:bg-cyan-700 active:bg-cyan-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-2xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-cyan-900/30 transition-all hover:scale-[1.01] cursor-pointer"
+                  >
+                    <Radio className="w-4 h-4" />
+                    <span>Buka &amp; Tangkap Media dari Tab</span>
+                  </button>
+                )}
+
+                {captureMsg && !isCapturing && (
+                  <p className="text-xs text-amber-300 bg-amber-950/40 border border-amber-800/50 p-3 rounded-xl leading-relaxed">
+                    {captureMsg}
+                  </p>
+                )}
+
+                {capturedList.length > 0 && (
+                  <div className="space-y-2.5">
+                    <span className="text-[11px] font-bold text-cyan-300 uppercase tracking-wider">
+                      Media Tertangkap ({capturedList.length})
+                    </span>
+                    {capturedList.map((m, idx) => (
+                      <div
+                        key={m.id || idx}
+                        className="p-3 rounded-2xl bg-zinc-900/90 border border-indigo-800/50 flex flex-col sm:flex-row sm:items-center gap-2.5"
+                      >
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-semibold text-zinc-100 truncate">{m.pageTitle || `Media ${idx + 1}`}</p>
+                          <p className="text-[10px] text-zinc-500 font-mono truncate mt-0.5">{m.sourceUrl}</p>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full bg-blue-950 border border-blue-700 text-blue-300 text-[10px] font-bold shrink-0">
+                          {m.formatCategory}
+                        </span>
+                        <button
+                          onClick={() => handlePlayCaptured(m)}
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-current" />
+                          <span>Putar</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -600,40 +966,27 @@ export default function LinkCheckerPage() {
           </div>
         )}
 
-        {/* Empty State Cards */}
+        {/* Empty State */}
         {!result && !isChecking && !error && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4">
-            {[
-              {
-                icon: ShieldCheck,
-                title: 'Pemindai Keamanan & DoH',
-                desc: 'Mendeteksi phishing, malware, dan membypass pemblokiran DNS ISP lokal secara otomatis.',
-                color: 'text-emerald-400',
-                bg: 'bg-emerald-950/20 border-emerald-800/30'
-              },
-              {
-                icon: Layers,
-                title: 'Pembersih Iklan & Tracker',
-                desc: 'Mencegah pop-under, tab liar, dan banner invasif saat membuka tautan video.',
-                color: 'text-blue-400',
-                bg: 'bg-blue-950/20 border-blue-800/30'
-              },
-              {
-                icon: Zap,
-                title: 'Putar & Unduh Bersih',
-                desc: 'Tonton langsung video dengan kontrol kustom atau simpan berkas MP4 ke penyimpanan lokal.',
-                color: 'text-yellow-400',
-                bg: 'bg-yellow-950/20 border-yellow-800/30'
-              }
-            ].map(({ icon: Icon, title, desc, color, bg }, index) => (
-              <div key={index} className={`p-5 rounded-3xl border ${bg} bg-zinc-900/60 backdrop-blur space-y-2.5 shadow-lg`}>
-                <div className="w-9 h-9 rounded-xl bg-zinc-800 flex items-center justify-center">
-                  <Icon className={`w-5 h-5 ${color}`} />
+          <div className="pt-2">
+            <div className="flex flex-wrap items-center justify-center gap-6 py-6 px-6 rounded-3xl bg-gradient-to-br from-zinc-900/80 to-zinc-950/80 border border-zinc-800">
+              {[
+                { icon: ShieldCheck, title: 'Pemindai Keamanan & DoH', desc: 'Deteksi phishing, judi, malware + bypass blokir DNS ISP otomatis.', color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20' },
+                { icon: Layers, title: 'Pembersih Iklan & Tracker', desc: 'Cegah pop-under, tab liar, dan banner invasif saat membuka link.', color: 'text-blue-400', bg: 'bg-blue-500/10 border-blue-500/20' },
+                { icon: Zap, title: 'Putar, Unduh & Open-Capture', desc: 'Tonton langsung, simpan MP4, atau tangkap URL dari hoster anti-bot.', color: 'text-cyan-400', bg: 'bg-cyan-500/10 border-cyan-500/20' }
+              ].map(({ icon: Icon, title, desc, color, bg }, index) => (
+                <div key={index} className={`w-64 p-5 rounded-2xl border ${bg} backdrop-blur space-y-2.5 text-left`}>
+                  <div className="w-9 h-9 rounded-xl bg-zinc-800 flex items-center justify-center">
+                    <Icon className={`w-5 h-5 ${color}`} />
+                  </div>
+                  <h4 className="text-xs font-bold text-zinc-100">{title}</h4>
+                  <p className="text-[11px] text-zinc-400 leading-relaxed">{desc}</p>
                 </div>
-                <h4 className="text-xs font-bold text-zinc-100">{title}</h4>
-                <p className="text-[11px] text-zinc-400 leading-relaxed">{desc}</p>
-              </div>
-            ))}
+              ))}
+            </div>
+            <div className="mt-6 text-center text-xs text-zinc-500">
+              Mulai dengan menempelkan tautan di kolom di atas, lalu klik <span className="text-blue-400 font-semibold">Cek URL</span>.
+            </div>
           </div>
         )}
       </main>
