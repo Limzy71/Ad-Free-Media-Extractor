@@ -28,26 +28,37 @@ class MediaProxyController extends Controller
         }
 
         $host = $urlObj['host'] ?? '';
+
+        // Layer 1: Coba resolve DNS standar (sistem)
         $resolvedIp = gethostbyname($host);
 
-        if ($resolvedIp === $host || !$this->isPublicInternetIp($resolvedIp)) {
-            return response('Access to internal/private network denied', 403);
+        // Layer 2: Jika DNS sistem gagal (ISP blokir), coba DNS-over-HTTPS (DoH)
+        if ($resolvedIp === $host) {
+            $resolvedIp = $this->resolveViaDoH($host);
+        }
+
+        if ($resolvedIp === null || !$this->isPublicInternetIp($resolvedIp)) {
+            return response('DNS resolution failed - domain may be blocked or invalid', 403);
         }
 
         $headers = [
             'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'Referer' => $request->input('referer', "https://{$host}/"),
+            'Origin' => "https://{$host}",
         ];
 
-        $referer = $request->input('referer');
-        if ($referer) {
-            $headers['Referer'] = $referer;
-        }
+        // Port dari URL original
+        $port = isset($urlObj['port']) ? (int) $urlObj['port'] : ($urlObj['scheme'] === 'https' ? 443 : 80);
 
         try {
+            // Gunakan CURLOPT_RESOLVE agar curl langsung pakai IP hasil DoH tanpa DNS ISP
             $response = Http::withHeaders($headers)
                 ->timeout(30)
                 ->withOptions([
                     'stream' => true,
+                    'curl' => [
+                        CURLOPT_RESOLVE => ["{$host}:{$port}:{$resolvedIp}"],
+                    ],
                 ])
                 ->get($mediaUrl);
 
@@ -96,6 +107,65 @@ class MediaProxyController extends Controller
         } catch (\Exception) {
             return response('Proxy request failed', 502);
         }
+    }
+
+    /**
+     * Resolve domain via DNS-over-HTTPS (Cloudflare & Google) untuk bypass blokir DNS ISP
+     */
+    private function resolveViaDoH(string $host): ?string
+    {
+        // Coba Cloudflare DoH (1.1.1.1)
+        try {
+            $response = Http::timeout(5)
+                ->withHeaders(['Accept' => 'application/dns-json'])
+                ->get("https://cloudflare-dns.com/dns-query", [
+                    'name' => $host,
+                    'type' => 'A',
+                ]);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                if (($data['Status'] ?? -1) === 0 && !empty($data['Answer'])) {
+                    foreach ($data['Answer'] as $answer) {
+                        if (($answer['type'] ?? 0) === 1 && !empty($answer['data'])) {
+                            $ip = $answer['data'];
+                            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                                return $ip;
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (\Exception) {
+            // Cloudflare DoH gagal, coba Google
+        }
+
+        // Coba Google DoH
+        try {
+            $response = Http::timeout(5)
+                ->get("https://dns.google/resolve", [
+                    'name' => $host,
+                    'type' => 'A',
+                ]);
+
+            if ($response->successful()) {
+                $data = $response->json();
+                if (($data['Status'] ?? -1) === 0 && !empty($data['Answer'])) {
+                    foreach ($data['Answer'] as $answer) {
+                        if (($answer['type'] ?? 0) === 1 && !empty($answer['data'])) {
+                            $ip = $answer['data'];
+                            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                                return $ip;
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (\Exception) {
+            // Kedua DoH gagal
+        }
+
+        return null;
     }
 
     private function isPublicInternetIp(string $ip): bool
