@@ -1,4 +1,4 @@
-﻿import type { SecurityVerificationResult, ThreatCategory } from '~/types/security';
+import type { SecurityVerificationResult, ThreatCategory } from '~/types/security';
 
 const BACKEND_API_URL = 'http://127.0.0.1:8000/api';
 
@@ -16,64 +16,55 @@ interface BackendVerifyResponse {
 const THREAT_MAP: Record<string, ThreatCategory> = {
   gambling: 'GAMBLING',
   phishing: 'PHISHING',
-  malware: 'MALWARE'
+  malware: 'MALWARE',
+  suspicious: 'SUSPICIOUS',
+  clickjacking: 'CLICKJACKING'
 };
 
 const THREAT_DESCRIPTIONS: Record<ThreatCategory, string> = {
   GAMBLING: 'Situs ini terindikasi sebagai platform perjudian online ilegal.',
   PHISHING: 'Situs ini terindikasi mencoba mencuri data pribadi atau kredensial akun.',
   MALWARE: 'Situs ini terindikasi mendistribusikan berkas berbahaya atau malware.',
-  CLICKJACKING: 'Situs ini terindikasi menggunakan teknik clickjacking.',
-  SUSPICIOUS: 'Situs ini terindikasi mencurigakan.'
+  CLICKJACKING: 'Situs ini terindikasi menggunakan teknik jebakan klik / iklan berbahaya.',
+  SUSPICIOUS: 'Situs terindikasi sebagai domain iklan parkir / spam atau tidak terenkripsi aman (HTTP).'
 };
 
 /**
- * Service untuk memverifikasi reputasi URL terhadap basis data ancaman (Phishing, Malware, Judi)
- * Strategi: Local Fast-Cache → Backend API → Local Keyword Fallback
+ * Service untuk memverifikasi reputasi URL terhadap basis data ancaman (Phishing, Malware, Judi, Iklan Parkir)
+ * Strategi: Local Fast-Cache -> Backend API -> Local Advanced Heuristic
  */
 export class LinkVerifierService {
   private static cache = new Map<string, SecurityVerificationResult>();
 
   private static gamblingKeywords: string[] = [
-    'slot88',
-    'judionline',
-    'gacor',
-    'sbobet',
-    'poker88',
-    'togel',
-    'maxwin',
-    'pragmaticplay',
-    'casino-online',
-    'bet365-fake',
-    'bandarqq',
-    'domino99'
+    'slot88', 'judionline', 'gacor', 'sbobet', 'poker88', 'togel',
+    'maxwin', 'pragmaticplay', 'casino-online', 'bet365-fake', 'bandarqq', 'domino99'
   ];
 
   private static phishingKeywords: string[] = [
-    'login-verify-account',
-    'paypal-security-update',
-    'bca-klik-fake',
-    'mandiri-online-secure',
-    'phishing-test',
-    'free-giftcard-claim'
+    'login-verify-account', 'paypal-security-update', 'bca-klik-fake',
+    'mandiri-online-secure', 'phishing-test', 'free-giftcard-claim'
   ];
 
   private static malwareKeywords: string[] = [
-    'malware-domain',
-    'trojan-download',
-    'ransomware-server',
-    'virus-installer'
+    'malware-domain', 'trojan-download', 'ransomware-server', 'virus-installer'
+  ];
+
+  private static suspiciousParkingPatterns: RegExp[] = [
+    /^ww\d+\./i,                     // Pola domain parkir iklan seperti ww547.viday.co, ww1.xyz
+    /sedoparking|bodis|parkingcrew|domaincontrol|namecheapheading/i,
+    /adclick|popunder|clickserve|trafficjunky|search-feed/i
   ];
 
   /**
-   * Cek reputasi URL dengan strategi berlapis: cache → backend → fallback lokal
+   * Cek reputasi URL dengan strategi berlapis: cache -> backend -> fallback lokal
    */
   public static async verifyUrl(url: string): Promise<SecurityVerificationResult> {
     if (!url || !url.startsWith('http')) {
       return {
         url: url || '',
         domain: '',
-        status: 'SAFE',
+        status: 'UNVERIFIED',
         riskScore: 0,
         isCached: true,
         verifiedAtTimestamp: Date.now()
@@ -85,8 +76,8 @@ export class LinkVerifierService {
       const domain = urlObj.hostname.toLowerCase();
 
       // Layer 1: In-memory cache
-      if (this.cache.has(domain)) {
-        return this.cache.get(domain)!;
+      if (this.cache.has(url)) {
+        return this.cache.get(url)!;
       }
 
       // Layer 1b: Whitelist check
@@ -101,20 +92,20 @@ export class LinkVerifierService {
           isCached: true,
           verifiedAtTimestamp: Date.now()
         };
-        this.cache.set(domain, safeResult);
+        this.cache.set(url, safeResult);
         return safeResult;
       }
 
       // Layer 2: Backend API
       const backendResult = await this.verifyViaBackend(url, domain);
       if (backendResult !== null) {
-        this.cache.set(domain, backendResult);
+        this.cache.set(url, backendResult);
         return backendResult;
       }
 
-      // Layer 3: Local keyword fallback (offline / backend unreachable)
+      // Layer 3: Local heuristic fallback
       const fallbackResult = this.verifyLocally(url, domain);
-      this.cache.set(domain, fallbackResult);
+      this.cache.set(url, fallbackResult);
       return fallbackResult;
     } catch {
       return {
@@ -129,7 +120,7 @@ export class LinkVerifierService {
   }
 
   /**
-   * Verifikasi URL melalui backend API (dengan timeout singkat)
+   * Verifikasi URL melalui backend API
    */
   private static async verifyViaBackend(
     url: string,
@@ -169,37 +160,55 @@ export class LinkVerifierService {
         verifiedAtTimestamp: Date.now()
       };
     } catch {
-      // Backend unreachable — fall through to local fallback
       return null;
     }
   }
 
   /**
-   * Verifikasi lokal berbasis keyword (fallback saat backend tidak tersedia)
+   * Verifikasi lokal berbasis Heuristik & Keyword
    */
   private static verifyLocally(url: string, domain: string): SecurityVerificationResult {
     let threatCategory: ThreatCategory | undefined;
     let threatDescription: string | undefined;
     let riskScore = 0;
+    let status: SecurityVerificationResult['status'] = 'SAFE';
 
+    // 1. Cek Ancaman Berbahaya (Malware / Phishing / Judi)
     if (this.gamblingKeywords.some((k) => domain.includes(k) || url.includes(k))) {
       threatCategory = 'GAMBLING';
       threatDescription = THREAT_DESCRIPTIONS.GAMBLING;
       riskScore = 95;
+      status = 'BLOCKED';
     } else if (this.phishingKeywords.some((k) => domain.includes(k) || url.includes(k))) {
       threatCategory = 'PHISHING';
       threatDescription = THREAT_DESCRIPTIONS.PHISHING;
       riskScore = 90;
+      status = 'BLOCKED';
     } else if (this.malwareKeywords.some((k) => domain.includes(k) || url.includes(k))) {
       threatCategory = 'MALWARE';
       threatDescription = THREAT_DESCRIPTIONS.MALWARE;
       riskScore = 99;
+      status = 'BLOCKED';
+    }
+    // 2. Cek Indikasi Domain Parkir / Iklan Arbitrase (seperti ww547.viday.co)
+    else if (this.suspiciousParkingPatterns.some((pattern) => pattern.test(domain) || pattern.test(url))) {
+      threatCategory = 'SUSPICIOUS';
+      threatDescription = 'Peringatan: Domain ini terdeteksi sebagai situs iklan parkir / domain spam (bukan situs video asli).';
+      riskScore = 65;
+      status = 'WARNING';
+    }
+    // 3. Cek Protokol HTTP Tidak Aman (Tanpa Enkripsi SSL)
+    else if (url.startsWith('http://')) {
+      threatCategory = 'SUSPICIOUS';
+      threatDescription = 'Peringatan: Tautan tidak menggunakan enkripsi HTTPS (Koneksi Tidak Aman / Berpotensi disadap).';
+      riskScore = 40;
+      status = 'WARNING';
     }
 
     return {
       url,
       domain,
-      status: threatCategory ? 'BLOCKED' : 'SAFE',
+      status,
       threatCategory,
       threatDescription,
       riskScore,
@@ -208,9 +217,6 @@ export class LinkVerifierService {
     };
   }
 
-  /**
-   * Menambahkan domain ke daftar whitelist
-   */
   public static async whitelistDomain(domain: string): Promise<void> {
     const data = await chrome.storage.local.get(['whitelistedDomains']);
     const list: string[] = data.whitelistedDomains || [];
@@ -221,9 +227,6 @@ export class LinkVerifierService {
     }
   }
 
-  /**
-   * Menghapus domain dari daftar whitelist
-   */
   public static async removeWhitelistedDomain(domain: string): Promise<void> {
     const data = await chrome.storage.local.get(['whitelistedDomains']);
     const list: string[] = data.whitelistedDomains || [];
