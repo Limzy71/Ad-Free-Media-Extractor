@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import Hls from 'hls.js';
-import { X, Film, AlertTriangle, RefreshCw, Loader2, FileQuestion, Ban, WifiOff, ExternalLink, ServerCrash } from 'lucide-react';
+import { X, Film, AlertTriangle, RefreshCw, Loader2, FileQuestion, Ban, WifiOff, ExternalLink } from 'lucide-react';
 import { PlayerControls } from './PlayerControls';
 import { DohResolverService } from '~/services/doh-resolver';
 import type { MediaMetadata } from '~/types/media';
@@ -46,8 +46,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
   const [errorDetails, setErrorDetails] = useState<ErrorDetails | null>(null);
   const [isLoadingMedia, setIsLoadingMedia] = useState<boolean>(true);
   const [isVertical, setIsVertical] = useState<boolean>(false);
-  const [bypassStage, setBypassStage] = useState<'DIRECT' | 'CORS_BLOB' | 'BACKEND_PROXY' | 'DONE'>('DIRECT');
-  const [hlsProxyRetryCount, setHlsProxyRetryCount] = useState<number>(0);
+  const [bypassStage, setBypassStage] = useState<'DIRECT' | 'PROXY' | 'DONE'>('DIRECT');
 
   const youtubeVideoId = media ? (extractYouTubeId(media.sourceUrl) || extractYouTubeId(media.pageUrl)) : null;
 
@@ -55,44 +54,16 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
     setIsPipAvailable(document.pictureInPictureEnabled || false);
   }, []);
 
-  // Initialize Video & HLS.js (Skip if YouTube embed)
-  useEffect(() => {
-    if (!media || youtubeVideoId) {
-      setIsLoadingMedia(false);
-      return;
-    }
+  const loadMediaStream = (urlToPlay: string, isHlsFormat: boolean) => {
     if (!videoRef.current) return;
-
     const video = videoRef.current;
-    setErrorDetails(null);
-    setIsLoadingMedia(true);
-    setBypassStage('DIRECT');
-    setHlsLevels([]);
-    setCurrentHlsLevel(-1);
 
-    const isHls =
-      media.formatCategory === 'HLS' ||
-      media.sourceUrl.includes('.m3u8') ||
-      media.mimeType === 'application/x-mpegURL' ||
-      media.mimeType === 'application/vnd.apple.mpegurl';
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
 
-    // Bila pemutaran langsung gagal, arahkan stream HLS ke backend proxy (yang me-rewrite manifest)
-    const useHlsProxy = hlsProxyRetryCount > 0 && isHls;
-    const hlsSourceUrl = useHlsProxy
-      ? DohResolverService.getBackendProxyUrl(media.sourceUrl, media.pageUrl)
-      : media.sourceUrl;
-
-    if (isHls) {
-      if (useHlsProxy && !Hls.isSupported()) {
-        setIsLoadingMedia(false);
-        setErrorDetails({
-          type: 'NETWORK',
-          title: 'Perlu Backend Proxy (HLS)',
-          message: 'Backend proxy (php artisan serve) diperlukan untuk melewati proteksi stream ini, tetapi browser tidak mendukung HLS melalui proxy.'
-        });
-        return () => {};
-      }
-
+    if (isHlsFormat) {
       if (Hls.isSupported()) {
         const hlsInstance = new Hls({
           enableWorker: true,
@@ -102,7 +73,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
         });
         hlsRef.current = hlsInstance;
 
-        hlsInstance.loadSource(hlsSourceUrl);
+        hlsInstance.loadSource(urlToPlay);
         hlsInstance.attachMedia(video);
 
         hlsInstance.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
@@ -116,7 +87,6 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
             setCurrentHlsLevel(data.levels.length - 1);
           }
           setIsLoadingMedia(false);
-          setBypassStage(useHlsProxy ? 'BACKEND_PROXY' : 'DONE');
           video.play().catch(() => setIsPlaying(false));
         });
 
@@ -125,148 +95,140 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
         });
 
         hlsInstance.on(Hls.Events.ERROR, (_event, data) => {
-          const httpStatus = data.response?.code;
           if (data.fatal) {
-            hlsInstance.destroy();
-            hlsRef.current = null;
-
-            // Fallback otomatis: direct -> backend proxy (kecuali sumber jelas sudah kadaluwarsa)
-            const isExpired = httpStatus === 404 || httpStatus === 410;
-            if (!isExpired && !useHlsProxy) {
-              setHlsProxyRetryCount(1);
+            if (bypassStage === 'DIRECT' && media) {
+              // Otomatis coba via Backend Proxy
+              setBypassStage('PROXY');
+              setIsLoadingMedia(true);
+              const proxyUrl = DohResolverService.getBackendProxyUrl(media.sourceUrl, media.pageUrl);
+              loadMediaStream(proxyUrl, true);
               return;
             }
 
+            hlsInstance.destroy();
             setIsLoadingMedia(false);
-            if (isExpired) {
-              setErrorDetails({ type: 'EXPIRED', statusCode: httpStatus, title: 'Tautan Stream Kadaluwarsa (404 Not Found)', message: 'Berkas playlist stream .m3u8 sudah tidak ditemukan atau masa aktif tautan telah berakhir di server sumber.' });
-            } else if (httpStatus === 403 || httpStatus === 401) {
-              setErrorDetails({ type: 'FORBIDDEN', statusCode: httpStatus, title: 'Akses Dibatasi oleh Server (403 Forbidden)', message: 'Server penyedia video memblokir izin pemutaran langsung. Backend proxy (php artisan serve) mungkin gagal dijangkau atau menolak akses.' });
-            } else if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-              setErrorDetails({ type: 'NETWORK', statusCode: httpStatus || 'Network', title: 'Koneksi ke Server Stream Terputus', message: 'Gagal mengunduh fragmen video HLS. Periksa koneksi internet Anda, atau pastikan backend proxy (php artisan serve) aktif untuk bypass otomatis.' });
-            } else {
-              setErrorDetails({ type: 'FORMAT', title: 'Format Media HLS Tidak Kompatibel', message: 'Terjadi kesalahan saat mendekode segmen video dari server sumber.' });
-            }
+            setErrorDetails({
+              type: 'NETWORK',
+              title: 'Koneksi ke Server Stream Terputus',
+              message: 'Gagal mengunduh segmen video stream HLS. Coba muat ulang.'
+            });
           }
         });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = hlsSourceUrl;
+        video.src = urlToPlay;
         video.play().catch(() => setIsPlaying(false));
-      } else {
-        setIsLoadingMedia(false);
-        setErrorDetails({ type: 'FORMAT', title: 'Format Tidak Didukung', message: 'Browser ini tidak mendukung pemutaran stream HLS secara native.' });
       }
     } else {
-      video.src = media.sourceUrl;
+      // Direct MP4 / WebM streaming
+      video.src = urlToPlay;
       video.load();
       video.play().catch(() => setIsPlaying(false));
     }
+  };
+
+  // Initialize Video & HLS.js
+  useEffect(() => {
+    if (!media || youtubeVideoId) {
+      setIsLoadingMedia(false);
+      return;
+    }
+
+    setErrorDetails(null);
+    setIsLoadingMedia(true);
+    setBypassStage('DIRECT');
+    setHlsLevels([]);
+    setCurrentHlsLevel(-1);
+
+    const isHls =
+      media.formatCategory === 'HLS' ||
+      media.sourceUrl.includes('.m3u8') ||
+      media.mimeType === 'application/x-mpegURL' ||
+      media.mimeType === 'application/vnd.apple.mpegurl';
+
+    loadMediaStream(media.sourceUrl, isHls);
 
     return () => {
-      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
-      if (blobUrlRef.current) { URL.revokeObjectURL(blobUrlRef.current); blobUrlRef.current = null; }
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
     };
-  }, [media, youtubeVideoId, hlsProxyRetryCount]);
+  }, [media, youtubeVideoId]);
 
   const handleLoadedMetadata = () => {
     if (!videoRef.current) return;
     const { videoWidth, videoHeight, duration: vidDuration } = videoRef.current;
     setDuration(vidDuration || 0);
     setIsLoadingMedia(false);
-    setBypassStage('DONE');
     setErrorDetails(null);
     setIsVertical(videoHeight > videoWidth);
   };
 
   /**
-   * Handler error bertingkat: Direct -> CORS Blob -> Backend Proxy (DoH) -> Show Error
+   * Handler error otomatis dengan fallback ke Backend Proxy (DoH & Anti-Hotlink)
    */
   const handleVideoError = async () => {
     if (!media || !videoRef.current) return;
 
-    // ============ STAGE 1: Coba bypass CORS via Blob fetch (ekstensi) ============
-    if (bypassStage === 'DIRECT' && !media.sourceUrl.startsWith('blob:')) {
-      setBypassStage('CORS_BLOB');
+    // JIKA TAHAP DIRECT GAGAL, OTOMATIS COBA MELALUI BACKEND PROXY (DoH & CORS BYPASS)
+    if (bypassStage === 'DIRECT') {
+      setBypassStage('PROXY');
       setIsLoadingMedia(true);
 
+      const isHls =
+        media.formatCategory === 'HLS' ||
+        media.sourceUrl.includes('.m3u8') ||
+        media.mimeType === 'application/x-mpegURL';
+
+      const proxyUrl = DohResolverService.getBackendProxyUrl(media.sourceUrl, media.pageUrl);
+
+      // Cek apakah server backend merespons proxy
       try {
-        const response = await fetch(media.sourceUrl);
-        if (response.ok) {
-          const blob = await response.blob();
-          if (blob && blob.size > 1000) {
-            const blobUrl = URL.createObjectURL(blob);
-            blobUrlRef.current = blobUrl;
-            videoRef.current.src = blobUrl;
-            videoRef.current.load();
-            videoRef.current.play().catch(() => {});
-            return; // Berhasil bypass CORS!
-          }
+        const testRes = await fetch(proxyUrl, { method: 'HEAD' });
+        if (testRes.ok || testRes.status === 206 || testRes.status === 200) {
+          loadMediaStream(proxyUrl, isHls);
+          return;
         }
       } catch {
-        // Blob fetch gagal (kemungkinan DNS ISP blokir), lanjut ke backend proxy
+        // Coba pasang langsung ke video element
+        loadMediaStream(proxyUrl, isHls);
+        return;
       }
     }
 
-    // ============ STAGE 2: Coba melalui Backend Proxy dengan DoH DNS ============
-    if (bypassStage === 'CORS_BLOB' || (bypassStage === 'DIRECT' && media.sourceUrl.startsWith('blob:'))) {
-      setBypassStage('BACKEND_PROXY');
-      setIsLoadingMedia(true);
-
-      try {
-        const proxyUrl = DohResolverService.getBackendProxyUrl(media.sourceUrl, media.pageUrl);
-        const proxyResponse = await fetch(proxyUrl);
-
-        if (proxyResponse.ok) {
-          const blob = await proxyResponse.blob();
-          if (blob && blob.size > 1000) {
-            if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
-            const blobUrl = URL.createObjectURL(blob);
-            blobUrlRef.current = blobUrl;
-            videoRef.current.src = blobUrl;
-            videoRef.current.load();
-            videoRef.current.play().catch(() => {});
-            return; // Berhasil via backend proxy + DoH!
-          }
-        }
-      } catch {
-        // Backend proxy juga gagal, tampilkan error final
-      }
-    }
-
-    // ============ STAGE 3: Semua bypass gagal, diagnosis dan tampilkan error ============
+    // JIKA PROXY JUGA GAGAL, TAMPILKAN DIAGNOSIS LENGKAP
     setIsLoadingMedia(false);
-    setBypassStage('DONE');
 
     try {
       const res = await fetch(media.sourceUrl, { method: 'HEAD' });
       if (res.status === 404 || res.status === 410) {
-        setErrorDetails({ type: 'EXPIRED', statusCode: res.status, title: 'Tautan Video Kadaluwarsa (404 Not Found)', message: 'Berkas video sudah dihapus atau tautan telah habis masa berlakunya di server penyedia.' });
+        setErrorDetails({
+          type: 'EXPIRED',
+          statusCode: res.status,
+          title: 'Tautan Video Kadaluwarsa (404 Not Found)',
+          message: 'Berkas video sudah dihapus atau tautan telah habis masa berlakunya di server penyedia.'
+        });
         return;
       }
       if (res.status === 403 || res.status === 401) {
-        setErrorDetails({ type: 'FORBIDDEN', statusCode: res.status, title: 'Akses Dibatasi oleh Server (403 Forbidden)', message: 'Server sumber menolak akses streaming langsung dari luar domainnya (Hotlink Protection).' });
-        return;
-      }
-    } catch {}
-
-    // Cek apakah domain diblokir ISP via DoH
-    try {
-      const domain = new URL(media.sourceUrl).hostname;
-      const dohResult = await DohResolverService.resolveDomainDoH(domain);
-      if (dohResult.isAlive) {
         setErrorDetails({
-          type: 'NETWORK',
-          title: 'Domain Diblokir oleh ISP (DNS Blocked)',
-          message: `Domain "${domain}" diblokir oleh provider internet Anda. Backend proxy (localhost:8000) diperlukan untuk melewati blokir ini. Pastikan backend Laravel sudah aktif dengan menjalankan: php artisan serve`
+          type: 'FORBIDDEN',
+          statusCode: res.status,
+          title: 'Akses Dibatasi oleh Server (403 Forbidden)',
+          message: 'Server sumber menolak akses streaming langsung dari luar domainnya (Hotlink Protection).'
         });
         return;
       }
     } catch {}
 
     setErrorDetails({
-      type: 'FORBIDDEN',
-      title: 'Akses Dibatasi atau Tautan Kadaluwarsa',
-      message: 'Server video menerapkan proteksi yang mencegah pemutaran langsung. Pastikan backend proxy (php artisan serve) aktif untuk bypass otomatis.'
+      type: 'NETWORK',
+      title: 'Domain Diblokir atau Gangguan Server',
+      message: 'Server video tidak merespons. Pastikan server backend (php artisan serve) berjalan di port 8000 untuk melewati blokir.'
     });
   };
 
@@ -317,20 +279,13 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
     setErrorDetails(null);
     setIsLoadingMedia(true);
     setBypassStage('DIRECT');
-    setHlsProxyRetryCount(0);
     if (blobUrlRef.current) { URL.revokeObjectURL(blobUrlRef.current); blobUrlRef.current = null; }
-    if (videoRef.current && media) {
-      videoRef.current.src = media.sourceUrl;
-      videoRef.current.load();
-    }
-  };
-
-  const getLoadingMessage = (): string => {
-    switch (bypassStage) {
-      case 'DIRECT': return 'Memuat video...';
-      case 'CORS_BLOB': return 'Mencoba bypass CORS (Blob stream)...';
-      case 'BACKEND_PROXY': return 'Melewati blokir ISP via Backend Proxy (DoH)...';
-      default: return 'Memuat video...';
+    if (media) {
+      const isHls =
+        media.formatCategory === 'HLS' ||
+        media.sourceUrl.includes('.m3u8') ||
+        media.mimeType === 'application/x-mpegURL';
+      loadMediaStream(media.sourceUrl, isHls);
     }
   };
 
@@ -379,7 +334,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
             onLoadedMetadata={handleLoadedMetadata}
             onError={handleVideoError}
             onWaiting={() => setIsLoadingMedia(true)}
-            onPlaying={() => { setIsLoadingMedia(false); setBypassStage('DONE'); }}
+            onPlaying={() => setIsLoadingMedia(false)}
             onEnded={() => setIsPlaying(false)}
             className="w-full h-full object-contain cursor-pointer"
             playsInline
@@ -390,10 +345,9 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
         {!youtubeVideoId && isLoadingMedia && !errorDetails && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 bg-black/60 z-25 pointer-events-none">
             <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-            <span className="text-xs font-semibold text-zinc-300">{getLoadingMessage()}</span>
-            {bypassStage === 'BACKEND_PROXY' && (
-              <span className="text-[10px] text-cyan-400 font-mono">Rute: localhost:8000/api/v1/proxy-media + DoH DNS</span>
-            )}
+            <span className="text-xs font-semibold text-zinc-300">
+              {bypassStage === 'PROXY' ? 'Melewati blokir ISP & Hotlink via Backend Proxy (DoH)...' : 'Memuat Video...'}
+            </span>
           </div>
         )}
 
