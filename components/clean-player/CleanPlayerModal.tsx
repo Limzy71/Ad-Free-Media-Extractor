@@ -1,6 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 import Hls from 'hls.js';
-import { X, Film, AlertTriangle, RefreshCw } from 'lucide-react';
+import { X, Film, AlertTriangle, RefreshCw, Loader2 } from 'lucide-react';
 import { PlayerControls } from './PlayerControls';
 import type { MediaMetadata } from '~/types/media';
 
@@ -30,6 +30,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
   const [hlsLevels, setHlsLevels] = useState<{ height: number; bitrate: number }[]>([]);
   const [currentHlsLevel, setCurrentHlsLevel] = useState<number>(-1);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isLoadingMedia, setIsLoadingMedia] = useState<boolean>(true);
   const [isVertical, setIsVertical] = useState<boolean>(false);
 
   // Check Picture-in-Picture Support
@@ -43,6 +44,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
 
     const video = videoRef.current;
     setErrorMsg(null);
+    setIsLoadingMedia(true);
     setHlsLevels([]);
     setCurrentHlsLevel(-1);
 
@@ -72,10 +74,10 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
               bitrate: lvl.bitrate
             }));
             setHlsLevels(mappedLevels);
-            // Force resolusi tertinggi (index terakhir)
             hlsInstance.currentLevel = data.levels.length - 1;
             setCurrentHlsLevel(data.levels.length - 1);
           }
+          setIsLoadingMedia(false);
           video.play().catch(() => setIsPlaying(false));
         });
 
@@ -94,7 +96,8 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
                 break;
               default:
                 hlsInstance.destroy();
-                setErrorMsg('Gagal memuat aliran video HLS. Sumber media mungkin dibatasi atau kadaluarsa.');
+                setIsLoadingMedia(false);
+                setErrorMsg('Gagal memuat stream HLS dari server sumber.');
                 break;
             }
           }
@@ -103,11 +106,13 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
         video.src = media.sourceUrl;
         video.play().catch(() => setIsPlaying(false));
       } else {
-        setErrorMsg('Peramban Anda tidak mendukung pemutaran video HLS.');
+        setIsLoadingMedia(false);
+        setErrorMsg('Format streaming HLS tidak didukung di browser ini.');
       }
     } else {
       // Direct MP4 / WebM
       video.src = media.sourceUrl;
+      video.load();
       video.play().catch(() => setIsPlaying(false));
     }
 
@@ -124,13 +129,18 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
     if (!videoRef.current) return;
     const { videoWidth, videoHeight, duration: vidDuration } = videoRef.current;
     setDuration(vidDuration || 0);
+    setIsLoadingMedia(false);
 
-    // If height > width, it is a vertical video (9:16 Shorts/Reels)
     if (videoHeight > videoWidth) {
       setIsVertical(true);
     } else {
       setIsVertical(false);
     }
+  };
+
+  const handleVideoError = () => {
+    setIsLoadingMedia(false);
+    setErrorMsg('Tidak dapat memutar video. Berkas video tidak ditemukan, link telah kedaluwarsa, atau dibatasi oleh server sumber.');
   };
 
   // Keyboard Shortcuts (Hotkeys)
@@ -267,6 +277,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
 
   const handleRetry = () => {
     setErrorMsg(null);
+    setIsLoadingMedia(true);
     if (videoRef.current) {
       videoRef.current.load();
     }
@@ -274,7 +285,7 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 sm:p-6 animate-in fade-in duration-200">
-      {/* Video Container (Dynamic Landscape 16:9 vs Vertical 9:16) */}
+      {/* Video Container */}
       <div
         ref={containerRef}
         className={`w-full max-h-[85vh] bg-black rounded-2xl overflow-hidden shadow-2xl relative border border-white/10 flex items-center justify-center group ${
@@ -297,17 +308,28 @@ export const CleanPlayerModal: React.FC<CleanPlayerModalProps> = ({
           </button>
         </div>
 
-        {/* Video Element (Double-click to toggle fullscreen) */}
+        {/* Video Element */}
         <video
           ref={videoRef}
           onClick={togglePlay}
           onDoubleClick={toggleFullscreen}
           onTimeUpdate={() => videoRef.current && setCurrentTime(videoRef.current.currentTime)}
           onLoadedMetadata={handleLoadedMetadata}
+          onError={handleVideoError}
+          onWaiting={() => setIsLoadingMedia(true)}
+          onPlaying={() => setIsLoadingMedia(false)}
           onEnded={() => setIsPlaying(false)}
           className="w-full h-full object-contain cursor-pointer"
           playsInline
         />
+
+        {/* Loading Spinner */}
+        {isLoadingMedia && !errorMsg && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 z-25 pointer-events-none">
+            <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
+            <span className="text-xs font-semibold text-zinc-300">Memuat Video...</span>
+          </div>
+        )}
 
         {/* Error Notification Banner with Retry */}
         {errorMsg && (

@@ -18,9 +18,9 @@ import {
   Clock,
   BarChart2,
   ArrowLeft,
-  ExternalLink,
   Sparkles,
-  Layers
+  Layers,
+  ExternalLink
 } from 'lucide-react';
 import { LinkVerifierService } from '~/services/link-verifier';
 import { CleanPlayerModal } from '~/components/clean-player/CleanPlayerModal';
@@ -38,28 +38,44 @@ interface CheckResult {
 }
 
 /**
- * Menyelesaikan URL video langsung dari berbagai pola platform streaming
+ * Ekstraktor pintar untuk mengambil URL video langsung dari URL halaman web
  */
-function resolveDirectMediaUrl(rawUrl: string): { url: string; format: MediaFormatCategory } | null {
+async function extractDirectMediaStream(rawUrl: string): Promise<{ url: string; format: MediaFormatCategory } | null> {
   try {
     const cleanUrl = rawUrl.trim();
 
-    // 1. Pola videy.co (https://videy.co/v/?id=XXXX -> https://cdn.videy.co/XXXX.mp4)
+    // 1. Videy.co parser
     const videyMatch = cleanUrl.match(/videy\.co\/v\/\?id=([a-zA-Z0-9_-]+)/i);
     if (videyMatch && videyMatch[1]) {
       return { url: `https://cdn.videy.co/${videyMatch[1]}.mp4`, format: 'MP4' };
     }
 
-    // 2. Format langsung (.mp4, .webm, .m3u8)
+    // 2. Format langsung (.m3u8, .mp4, .webm)
     const urlWithoutQuery = cleanUrl.split('?')[0].toLowerCase();
-    if (urlWithoutQuery.endsWith('.m3u8')) {
-      return { url: cleanUrl, format: 'HLS' };
-    }
-    if (urlWithoutQuery.endsWith('.webm')) {
-      return { url: cleanUrl, format: 'WEBM' };
-    }
-    if (urlWithoutQuery.endsWith('.mp4')) {
-      return { url: cleanUrl, format: 'MP4' };
+    if (urlWithoutQuery.endsWith('.m3u8')) return { url: cleanUrl, format: 'HLS' };
+    if (urlWithoutQuery.endsWith('.webm')) return { url: cleanUrl, format: 'WEBM' };
+    if (urlWithoutQuery.endsWith('.mp4')) return { url: cleanUrl, format: 'MP4' };
+
+    // 3. Ekstraksi otomatis dari HTML halaman web
+    const res = await fetch(cleanUrl);
+    if (res.ok) {
+      const html = await res.text();
+
+      // Cari tag <video src="..."> atau <source src="...">
+      const vMatch = html.match(/<video[^>]*src=["']([^"']+)["']/i) || html.match(/<source[^>]*src=["']([^"']+)["']/i);
+      if (vMatch && vMatch[1]) {
+        const absolute = new URL(vMatch[1], cleanUrl).href;
+        const fmt: MediaFormatCategory = absolute.includes('.m3u8') ? 'HLS' : 'MP4';
+        return { url: absolute, format: fmt };
+      }
+
+      // Cari stream URL dalam script / page data
+      const urlMatch = html.match(/https?:\/\/[^"'\s<>]+\.(?:m3u8|mp4|webm)(?:\?[^"'\s<>]*)?/i);
+      if (urlMatch && urlMatch[0]) {
+        const absolute = urlMatch[0];
+        const fmt: MediaFormatCategory = absolute.includes('.m3u8') ? 'HLS' : 'MP4';
+        return { url: absolute, format: fmt };
+      }
     }
 
     return null;
@@ -107,8 +123,8 @@ export default function LinkCheckerPage() {
       // 1. Verifikasi Keamanan URL
       const security = await LinkVerifierService.verifyUrl(fullUrl);
 
-      // 2. Analisis Media Stream
-      const directMedia = resolveDirectMediaUrl(fullUrl);
+      // 2. Ekstraksi Media Stream Nyata
+      const directMedia = await extractDirectMediaStream(fullUrl);
 
       const responseTimeMs = Date.now() - startTime;
       const checkedAt = new Date().toLocaleTimeString('id-ID');
@@ -127,12 +143,19 @@ export default function LinkCheckerPage() {
     }
   }, [inputUrl]);
 
-  const handleOpenClean = () => {
+  const handleOpenClean = async () => {
     if (!inputUrl) return;
     const fullUrl = inputUrl.startsWith('http') ? inputUrl : `https://${inputUrl}`;
-    const directMedia = resolveDirectMediaUrl(fullUrl);
-    const playUrl = directMedia?.url ?? fullUrl;
-    const formatCategory: MediaFormatCategory = directMedia?.format ?? (playUrl.includes('.m3u8') ? 'HLS' : 'MP4');
+
+    // Gunakan URL media yang sudah ter-resolusi atau ekstrak langsung
+    let playUrl = result?.resolvedMediaUrl;
+    let formatCategory = result?.mediaFormat ?? 'MP4';
+
+    if (!playUrl) {
+      const extracted = await extractDirectMediaStream(fullUrl);
+      playUrl = extracted?.url ?? fullUrl;
+      formatCategory = extracted?.format ?? (playUrl.includes('.m3u8') ? 'HLS' : 'MP4');
+    }
 
     let domainTitle = 'Video Stream';
     try {
@@ -154,18 +177,8 @@ export default function LinkCheckerPage() {
   };
 
   const handleDownload = (media?: MediaMetadata) => {
-    const targetMedia = media ?? (result?.resolvedMediaUrl ? {
-      id: Date.now().toString(),
-      sourceUrl: result.resolvedMediaUrl,
-      pageUrl: inputUrl,
-      pageTitle: 'video_download',
-      mimeType: 'video/mp4',
-      formatCategory: result.mediaFormat,
-      detectedAtTimestamp: Date.now(),
-      isDrmProtected: false
-    } as MediaMetadata : null);
-
-    if (!targetMedia) return;
+    const targetUrl = media?.sourceUrl ?? result?.resolvedMediaUrl ?? inputUrl;
+    const targetFormat = media?.formatCategory ?? result?.mediaFormat ?? 'MP4';
 
     setToast({
       id: Date.now().toString(),
@@ -177,10 +190,10 @@ export default function LinkCheckerPage() {
     chrome.runtime.sendMessage({
       type: 'START_MEDIA_DOWNLOAD',
       payload: {
-        mediaId: targetMedia.id,
-        sourceUrl: targetMedia.sourceUrl,
-        filename: `${targetMedia.pageTitle || 'video'}.${targetMedia.formatCategory.toLowerCase()}`,
-        formatCategory: targetMedia.formatCategory
+        mediaId: Date.now().toString(),
+        sourceUrl: targetUrl,
+        filename: `video_${Date.now()}.${targetFormat.toLowerCase()}`,
+        formatCategory: targetFormat
       }
     }).catch(() => {});
   };
@@ -255,7 +268,7 @@ export default function LinkCheckerPage() {
           </h2>
           <p className="text-sm text-zinc-400 max-w-xl mx-auto leading-relaxed">
             Tempelkan tautan video atau halaman web apa pun. Sistem akan memindai ancaman keamanan,
-            membersihkan iklan, dan memutar media langsung dalam player bersih.
+            mengekstrak video asli, dan memutar media langsung dalam player bersih.
           </p>
         </div>
 
@@ -416,8 +429,8 @@ export default function LinkCheckerPage() {
 
                 <p className="text-xs text-zinc-400 leading-relaxed">
                   {result.resolvedMediaUrl
-                    ? 'Stream video berhasil diekstrak! Anda dapat langsung memutarnya di modal player bersih tanpa iklan atau mengunduhnya langsung.'
-                    : 'Tautan halaman web siap diputar. Klik "Putar Bersih" untuk membuka pemutar video tanpa gangguan iklan.'}
+                    ? 'Stream video berhasil diekstrak! Klik "Putar Bersih" untuk memutar video langsung tanpa iklan atau unduh ke perangkat.'
+                    : 'Tautan halaman web siap diputar. Klik "Putar Bersih" untuk mengekstrak dan memutar video di dalam player bersih.'}
                 </p>
 
                 <div className="flex flex-col sm:flex-row gap-3 pt-1">
@@ -508,7 +521,7 @@ export default function LinkCheckerPage() {
       <footer className="max-w-4xl mx-auto px-6 py-6 text-center text-[11px] text-zinc-500 border-t border-zinc-900 flex items-center justify-between w-full">
         <span>Universal Ad-Free Media Extractor v1.0.0</span>
         <span className="flex items-center gap-1 text-emerald-500 font-semibold">
-          <ShieldCheck className="w-3.5 h-3.5" /> Zero Data Retention • Aman & Terenkripsi
+          <ShieldCheck className="w-3.5 h-3.5" /> Zero Data Retention - Aman & Terenkripsi
         </span>
       </footer>
     </div>
