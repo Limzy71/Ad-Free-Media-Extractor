@@ -237,7 +237,7 @@ export default function LinkCheckerPage() {
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-lg shadow-blue-900/30">
-              <Sparkles className="w-5 h-5 text-white" />
+              <Play className="w-5 h-5 text-white fill-white ml-0.5" />
             </div>
             <div>
               <h1 className="text-sm font-bold text-white tracking-tight flex items-center gap-2">

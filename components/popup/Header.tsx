@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldCheck, ShieldAlert, Sparkles, Power, ExternalLink } from 'lucide-react';
+import { ShieldCheck, ShieldAlert, Play, Power, ExternalLink } from 'lucide-react';
 import type { SecurityStatus } from '~/types/security';
 
 interface HeaderProps {
@@ -27,7 +27,7 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-sm">
-            <Sparkles className="w-4 h-4" />
+            <Play className="w-4 h-4 text-white fill-white ml-0.5" />
           </div>
           <div>
             <h1 className="text-xs font-bold text-zinc-900 dark:text-white tracking-tight leading-none">
